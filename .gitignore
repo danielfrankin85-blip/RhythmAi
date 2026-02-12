@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.production
+
+# TypeScript
+*.tsbuildinfo
+
+# Music files (user content)
+music/*.mp3
+music/*.wav
+music/*.ogg
+music/*.flac
+
+# Local FFmpeg bundles/binaries
+ffmpeg-8.0.1/
+ffmpeg-8.0.1-essentials_build/
+ffmpeg.exe
