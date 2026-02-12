@@ -2,6 +2,115 @@ import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
 import { DifficultySelect } from './DifficultySelect';
 
+// ── YouTube helpers ──────────────────────────────────────────────────────────
+
+/** Extract a YouTube video ID from any common URL format */
+function extractYouTubeId(input: string): string | null {
+  const trimmed = input.trim();
+  // Direct ID (11 chars, alphanumeric + - + _)
+  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
+
+  try {
+    const url = new URL(trimmed);
+    // youtu.be/<id>
+    if (url.hostname === 'youtu.be') return url.pathname.slice(1).split('/')[0] || null;
+    // youtube.com/watch?v=<id>
+    const v = url.searchParams.get('v');
+    if (v) return v;
+    // youtube.com/embed/<id> or /shorts/<id>
+    const parts = url.pathname.split('/').filter(Boolean);
+    if ((parts[0] === 'embed' || parts[0] === 'shorts') && parts[1]) return parts[1];
+  } catch { /* not a valid URL — fall through */ }
+
+  // Regex fallback
+  const match = trimmed.match(/(?:v=|\/|embed\/|shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  return match ? match[1] : null;
+}
+
+/** Public Piped / Invidious instances we try in order (all have CORS support) */
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+  'https://api.piped.yt',
+];
+
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.fdn.fr',
+  'https://vid.puffyan.us',
+  'https://invidious.lunar.icu',
+];
+
+interface YTStreamResult {
+  title: string;
+  audioUrl: string;
+  duration: number; // seconds
+}
+
+async function fetchYouTubeAudio(videoId: string): Promise<YTStreamResult> {
+  // ── Try Piped first ────────────────────────────────────────────────────
+  for (const base of PIPED_INSTANCES) {
+    try {
+      const resp = await fetch(`${base}/streams/${videoId}`, { signal: AbortSignal.timeout(12000) });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      // Pick the best audio-only stream
+      const audioStreams: { url: string; mimeType: string; bitrate: number }[] = data.audioStreams ?? [];
+      const best = audioStreams
+        .filter((s: { mimeType: string }) => s.mimeType?.startsWith('audio/'))
+        .sort((a: { bitrate: number }, b: { bitrate: number }) => b.bitrate - a.bitrate)[0];
+      if (best?.url) {
+        return { title: data.title ?? `YouTube – ${videoId}`, audioUrl: best.url, duration: data.duration ?? 0 };
+      }
+    } catch { /* instance down — try next */ }
+  }
+
+  // ── Fallback to Invidious ──────────────────────────────────────────────
+  for (const base of INVIDIOUS_INSTANCES) {
+    try {
+      const resp = await fetch(`${base}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(12000) });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const audioStreams: { url: string; type: string; bitrate: string }[] = data.adaptiveFormats?.filter(
+        (f: { type: string }) => f.type?.startsWith('audio/')
+      ) ?? [];
+      const best = audioStreams.sort(
+        (a: { bitrate: string }, b: { bitrate: string }) => parseInt(b.bitrate) - parseInt(a.bitrate)
+      )[0];
+      if (best?.url) {
+        return { title: data.title ?? `YouTube – ${videoId}`, audioUrl: best.url, duration: data.lengthSeconds ?? 0 };
+      }
+    } catch { /* next */ }
+  }
+
+  throw new Error(
+    'Could not extract audio from this YouTube video.\n\n' +
+    'All proxy servers are currently unavailable or the video is restricted.\n' +
+    'Try again in a moment, or paste a different link.'
+  );
+}
+
+async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
+  // Try direct fetch first
+  try {
+    const resp = await fetch(audioUrl, { signal: AbortSignal.timeout(60000) });
+    if (resp.ok) return await resp.blob();
+  } catch { /* CORS blocked — try proxy */ }
+
+  // CORS proxy fallback
+  const proxyPrefixes = [
+    'https://corsproxy.io/?',
+    'https://api.allorigins.win/raw?url=',
+  ];
+  for (const prefix of proxyPrefixes) {
+    try {
+      const resp = await fetch(prefix + encodeURIComponent(audioUrl), { signal: AbortSignal.timeout(60000) });
+      if (resp.ok) return await resp.blob();
+    } catch { /* try next */ }
+  }
+
+  throw new Error('Failed to download the audio stream. The video may be geo-restricted or too large.');
+}
+
 // ── IndexedDB helpers for persisting uploaded songs ──────────────────────────
 
 const DB_NAME = 'RhythmGameSongs';
@@ -133,8 +242,14 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => 
   const [isFetching, setIsFetching] = useState(false);
   const [customSongs, setCustomSongs] = useState<StoredSong[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [tab, setTab] = useState<'library' | 'custom'>('library');
+  const [tab, setTab] = useState<'library' | 'custom' | 'youtube'>('library');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // YouTube-specific state
+  const [ytUrl, setYtUrl] = useState('');
+  const [ytStatus, setYtStatus] = useState<'idle' | 'resolving' | 'downloading' | 'error'>('idle');
+  const [ytError, setYtError] = useState<string | null>(null);
+  const [ytTitle, setYtTitle] = useState<string | null>(null);
 
   // Load persisted custom songs from IndexedDB on mount
   useEffect(() => {
@@ -211,6 +326,51 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => 
     setCustomSongs((prev) => prev.filter((s) => s.id !== id));
     if (selectedSong?.id === id) setSelectedSong(null);
   }, [selectedSong]);
+
+  // ── YouTube link handler ──────────────────────────────────────────────
+  const handleYouTubeLoad = useCallback(async () => {
+    const videoId = extractYouTubeId(ytUrl);
+    if (!videoId) {
+      setYtError('Invalid YouTube URL. Paste a link like https://youtube.com/watch?v=... or https://youtu.be/...');
+      setYtStatus('error');
+      return;
+    }
+
+    try {
+      setYtStatus('resolving');
+      setYtError(null);
+      setYtTitle(null);
+
+      // Step 1: Resolve stream URL
+      const result = await fetchYouTubeAudio(videoId);
+      setYtTitle(result.title);
+      setYtStatus('downloading');
+
+      // Step 2: Download the audio blob
+      const blob = await downloadYouTubeBlob(result.audioUrl);
+
+      // Step 3: Persist to IndexedDB like a regular custom song
+      const song: StoredSong = {
+        id: `yt-${videoId}-${Date.now()}`,
+        name: result.title,
+        blob,
+        addedAt: Date.now(),
+        size: blob.size,
+      };
+      await storeSong(song);
+      setCustomSongs((prev) => [song, ...prev]);
+
+      // Auto-select and jump to custom tab
+      setSelectedSong({ type: 'custom', id: song.id, name: song.name, blob: song.blob, size: song.size });
+      setTab('custom');
+      setYtStatus('idle');
+      setYtUrl('');
+      setYtTitle(null);
+    } catch (err) {
+      setYtError((err as Error).message);
+      setYtStatus('error');
+    }
+  }, [ytUrl]);
 
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -317,9 +477,81 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => 
         >
           📁 My Songs ({customEntries.length})
         </button>
+        <button
+          className={`song-tabs__tab ${tab === 'youtube' ? 'song-tabs__tab--active' : ''}`}
+          onClick={() => setTab('youtube')}
+        >
+          ▶ YouTube
+        </button>
       </div>
 
+      {/* ── YouTube link input ───────────────────────────────────────────── */}
+      {tab === 'youtube' && (
+        <div className="yt-section">
+          <div className="yt-section__header">
+            <div className="yt-section__icon">▶</div>
+            <div>
+              <div className="yt-section__title">Import from YouTube</div>
+              <div className="yt-section__subtitle">
+                Paste any YouTube link — the AI will extract the audio, analyze it, and generate a beatmap
+              </div>
+            </div>
+          </div>
+
+          <div className="yt-section__input-row">
+            <input
+              type="text"
+              className="yt-section__input"
+              placeholder="https://youtube.com/watch?v=... or https://youtu.be/..."
+              value={ytUrl}
+              onChange={(e) => { setYtUrl(e.target.value); setYtError(null); setYtStatus('idle'); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && ytUrl.trim() && ytStatus === 'idle') handleYouTubeLoad(); }}
+              disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
+            />
+            <button
+              className="yt-section__btn"
+              onClick={handleYouTubeLoad}
+              disabled={!ytUrl.trim() || ytStatus === 'resolving' || ytStatus === 'downloading'}
+            >
+              {ytStatus === 'resolving' ? '🔍 Resolving...'
+                : ytStatus === 'downloading' ? '⬇ Downloading...'
+                : '🎵 Load Song'}
+            </button>
+          </div>
+
+          {ytTitle && ytStatus === 'downloading' && (
+            <div className="yt-section__progress">
+              <div className="yt-section__progress-spinner" />
+              <span>Downloading: <strong>{ytTitle}</strong></span>
+            </div>
+          )}
+
+          {ytStatus === 'resolving' && (
+            <div className="yt-section__progress">
+              <div className="yt-section__progress-spinner" />
+              <span>Finding audio stream…</span>
+            </div>
+          )}
+
+          {ytError && (
+            <div className="yt-section__error">
+              ⚠ {ytError}
+            </div>
+          )}
+
+          <div className="yt-section__tips">
+            <strong>Tips:</strong>
+            <ul>
+              <li>Works with regular videos, Shorts, and music videos</li>
+              <li>The song is saved to "My Songs" after download</li>
+              <li>Some region-locked or age-restricted videos may not work</li>
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* ── Song list ────────────────────────────────────────────────────── */}
+      {tab !== 'youtube' && (
       <div className="song-list">
         {displayList.length === 0 && tab === 'custom' && (
           <div className="song-list__empty">
@@ -351,6 +583,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => 
           </button>
         ))}
       </div>
+      )}
 
       {selectedSong && (
         <>
