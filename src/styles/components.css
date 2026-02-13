@@ -110,6 +110,10 @@
   justify-content: center;
 }
 
+.menu .btn {
+  color: #000;
+}
+
 .menu__settings-btn {
   color: #000;
 }
