@@ -168,9 +168,7 @@ const BUILTIN_SONGS = [
   { id: 'b9',  name: 'F-L-Y - Spectrum', path: '/music/Spectrum_%5B%E3%82%B9%E3%83%9A%E3%82%AF%E3%83%88%E3%83%A9%E3%83%A0%5D_-_F-L-Y_(1980)_320k.mp3' },
   { id: 'b10', name: 'NIWA - Teno and More', path: '/music/NIWA_FULL_SHOWCASE_-_Teno_and_More_320k.mp3' },
   { id: 'b11', name: 'Slava Song', path: '/music/Omer_Adam_feat._Arisa_-_Tel_Aviv_320k.mp3' },
-  { id: 'b12', name: 'Epstein F**k N***a', path: '/music/epstein_fuck_nigga_%23smokingepsteinpackheburnin_320k.mp3' },
   { id: 'b13', name: 'Lil Tecca - Dark Thoughts', path: '/music/Lil_Tecca_-_Dark_Thoughts_(Official_Video)_320k.mp3' },
-  { id: 'b14', name: 'Picasso Mixx', path: '/music/SpotiDownloader.com%20-%20picasso%20mixx%20-%20DJ%20CIGAN%20EXLUSIVES.mp3' },
 ];
 
 // ── Types ────────────────────────────────────────────────────────────────────
