@@ -874,7 +874,10 @@
 
 .map-leaderboard {
   position: absolute;
-  left: var(--space-lg);
+  left: max(
+    var(--space-sm),
+    calc(50% - min(30vw, 200px) - min(280px, 32vw) - var(--space-md))
+  );
   top: 50%;
   transform: translateY(-50%);
   width: min(280px, 32vw);
