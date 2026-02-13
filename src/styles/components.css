@@ -625,6 +625,11 @@
 }
 
 .difficulty-option.hard.selected {
+  border-color: var(--color-warning);
+  box-shadow: var(--glow-yellow);
+}
+
+.difficulty-option.extreme.selected {
   border-color: var(--color-error);
   box-shadow: var(--glow-red);
 }

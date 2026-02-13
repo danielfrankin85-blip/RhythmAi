@@ -7,6 +7,7 @@ const PERFECT_HIT_SOUND_OPTIONS: Array<{ value: PerfectHitSound; label: string }
   { value: 'drum', label: 'Drum Hit' },
   { value: 'trumpet', label: 'Trumpet Stab' },
   { value: 'synth', label: 'Synth Pop' },
+  { value: 'piano', label: 'Piano Key' },
 ];
 
 interface SettingsProps {

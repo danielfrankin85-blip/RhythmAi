@@ -10,7 +10,8 @@ interface DifficultyOption {
 const DIFFICULTIES: DifficultyOption[] = [
   { value: 'easy', name: 'Easy', description: 'Sparse notes, 3 lanes' },
   { value: 'medium', name: 'Medium', description: 'Moderate density, 4 lanes' },
-  { value: 'hard', name: 'Hard', description: 'Dense notes + chords' },
+  { value: 'hard', name: 'Hard', description: 'Dense notes, 4 lanes' },
+  { value: 'extreme', name: 'Extreme', description: 'Insane density + chords' },
 ];
 
 interface DifficultySelectProps {

@@ -45,7 +45,7 @@ import {
 // Re-export types so consumers can import from GameEngine directly
 export { GameState, GameEvent, HitJudgment, TargetFPS, type ScoreState };
 
-export type PerfectHitSound = 'bass' | 'guitar' | 'drum' | 'trumpet' | 'synth';
+export type PerfectHitSound = 'bass' | 'guitar' | 'drum' | 'trumpet' | 'synth' | 'piano';
 
 // ── Default config ───────────────────────────────────────────────────────────
 
@@ -758,6 +758,9 @@ export class GameEngine extends EventEmitter<GameEventMap> {
         case 'synth':
           this.playPerfectSynth(ctx, now);
           break;
+        case 'piano':
+          this.playPerfectPiano(ctx, now);
+          break;
         case 'bass':
         default:
           this.playPerfectBass(ctx, now);
@@ -786,7 +789,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     sub.frequency.exponentialRampToValueAtTime(25, now + 0.12);
     const subGain = ctx.createGain();
     subGain.gain.setValueAtTime(0, now);
-    subGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
+    subGain.gain.linearRampToValueAtTime(0.50, now + 0.008);
     subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
     sub.connect(subGain);
     subGain.connect(this.sfxGain!);
@@ -799,7 +802,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     mid.frequency.exponentialRampToValueAtTime(50, now + 0.08);
     const midGain = ctx.createGain();
     midGain.gain.setValueAtTime(0, now);
-    midGain.gain.linearRampToValueAtTime(0.25, now + 0.005);
+    midGain.gain.linearRampToValueAtTime(0.36, now + 0.005);
     midGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
     mid.connect(midGain);
     midGain.connect(this.sfxGain!);
@@ -812,7 +815,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     click.frequency.exponentialRampToValueAtTime(60, now + 0.03);
     const clickGain = ctx.createGain();
     clickGain.gain.setValueAtTime(0, now);
-    clickGain.gain.linearRampToValueAtTime(0.12, now + 0.003);
+    clickGain.gain.linearRampToValueAtTime(0.18, now + 0.003);
     clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
     click.connect(clickGain);
     clickGain.connect(this.sfxGain!);
@@ -827,7 +830,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     body.frequency.exponentialRampToValueAtTime(170, now + 0.16);
     const bodyGain = ctx.createGain();
     bodyGain.gain.setValueAtTime(0.0001, now);
-    bodyGain.gain.linearRampToValueAtTime(0.22, now + 0.006);
+    bodyGain.gain.linearRampToValueAtTime(0.32, now + 0.006);
     bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
     body.connect(bodyGain);
     bodyGain.connect(this.sfxGain!);
@@ -840,7 +843,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     pick.frequency.exponentialRampToValueAtTime(420, now + 0.04);
     const pickGain = ctx.createGain();
     pickGain.gain.setValueAtTime(0.0001, now);
-    pickGain.gain.linearRampToValueAtTime(0.1, now + 0.002);
+    pickGain.gain.linearRampToValueAtTime(0.15, now + 0.002);
     pickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
     pick.connect(pickGain);
     pickGain.connect(this.sfxGain!);
@@ -855,7 +858,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     kick.frequency.exponentialRampToValueAtTime(45, now + 0.09);
     const kickGain = ctx.createGain();
     kickGain.gain.setValueAtTime(0.0001, now);
-    kickGain.gain.linearRampToValueAtTime(0.34, now + 0.003);
+    kickGain.gain.linearRampToValueAtTime(0.48, now + 0.003);
     kickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
     kick.connect(kickGain);
     kickGain.connect(this.sfxGain!);
@@ -868,7 +871,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     snap.frequency.exponentialRampToValueAtTime(180, now + 0.02);
     const snapGain = ctx.createGain();
     snapGain.gain.setValueAtTime(0.0001, now);
-    snapGain.gain.linearRampToValueAtTime(0.12, now + 0.002);
+    snapGain.gain.linearRampToValueAtTime(0.18, now + 0.002);
     snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
     snap.connect(snapGain);
     snapGain.connect(this.sfxGain!);
@@ -883,7 +886,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     tone.frequency.exponentialRampToValueAtTime(330, now + 0.12);
     const toneGain = ctx.createGain();
     toneGain.gain.setValueAtTime(0.0001, now);
-    toneGain.gain.linearRampToValueAtTime(0.2, now + 0.008);
+    toneGain.gain.linearRampToValueAtTime(0.30, now + 0.008);
     toneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
     tone.connect(toneGain);
     toneGain.connect(this.sfxGain!);
@@ -895,7 +898,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     overtone.frequency.setValueAtTime(524, now);
     const overtoneGain = ctx.createGain();
     overtoneGain.gain.setValueAtTime(0.0001, now);
-    overtoneGain.gain.linearRampToValueAtTime(0.06, now + 0.01);
+    overtoneGain.gain.linearRampToValueAtTime(0.09, now + 0.01);
     overtoneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
     overtone.connect(overtoneGain);
     overtoneGain.connect(this.sfxGain!);
@@ -910,7 +913,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     lead.frequency.exponentialRampToValueAtTime(523, now + 0.08);
     const leadGain = ctx.createGain();
     leadGain.gain.setValueAtTime(0.0001, now);
-    leadGain.gain.linearRampToValueAtTime(0.18, now + 0.004);
+    leadGain.gain.linearRampToValueAtTime(0.26, now + 0.004);
     leadGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
     lead.connect(leadGain);
     leadGain.connect(this.sfxGain!);
@@ -923,12 +926,73 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     sub.frequency.exponentialRampToValueAtTime(82, now + 0.1);
     const subGain = ctx.createGain();
     subGain.gain.setValueAtTime(0.0001, now);
-    subGain.gain.linearRampToValueAtTime(0.12, now + 0.005);
+    subGain.gain.linearRampToValueAtTime(0.18, now + 0.005);
     subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
     sub.connect(subGain);
     subGain.connect(this.sfxGain!);
     sub.start(now);
     sub.stop(now + 0.15);
+  }
+
+  /**
+   * Piano – bright hammer strike with rich harmonics + soft sustain tail.
+   * Uses sine fundamentals with overtone partials for a realistic piano timbre.
+   */
+  private playPerfectPiano(ctx: AudioContext, now: number): void {
+    // Fundamental – C4 (261.63 Hz)
+    const fund = ctx.createOscillator();
+    fund.type = 'sine';
+    fund.frequency.setValueAtTime(261.63, now);
+    const fundGain = ctx.createGain();
+    fundGain.gain.setValueAtTime(0.0001, now);
+    fundGain.gain.linearRampToValueAtTime(0.40, now + 0.004);
+    fundGain.gain.exponentialRampToValueAtTime(0.06, now + 0.15);
+    fundGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    fund.connect(fundGain);
+    fundGain.connect(this.sfxGain!);
+    fund.start(now);
+    fund.stop(now + 0.36);
+
+    // 2nd partial (octave) – softer
+    const p2 = ctx.createOscillator();
+    p2.type = 'sine';
+    p2.frequency.setValueAtTime(523.25, now);
+    const p2Gain = ctx.createGain();
+    p2Gain.gain.setValueAtTime(0.0001, now);
+    p2Gain.gain.linearRampToValueAtTime(0.18, now + 0.003);
+    p2Gain.gain.exponentialRampToValueAtTime(0.02, now + 0.12);
+    p2Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    p2.connect(p2Gain);
+    p2Gain.connect(this.sfxGain!);
+    p2.start(now);
+    p2.stop(now + 0.30);
+
+    // 3rd partial (octave + fifth) – bright shimmer
+    const p3 = ctx.createOscillator();
+    p3.type = 'sine';
+    p3.frequency.setValueAtTime(784.0, now);
+    const p3Gain = ctx.createGain();
+    p3Gain.gain.setValueAtTime(0.0001, now);
+    p3Gain.gain.linearRampToValueAtTime(0.08, now + 0.002);
+    p3Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+    p3.connect(p3Gain);
+    p3Gain.connect(this.sfxGain!);
+    p3.start(now);
+    p3.stop(now + 0.12);
+
+    // Hammer attack – short high-frequency click for key-strike feel
+    const hammer = ctx.createOscillator();
+    hammer.type = 'triangle';
+    hammer.frequency.setValueAtTime(4000, now);
+    hammer.frequency.exponentialRampToValueAtTime(800, now + 0.008);
+    const hammerGain = ctx.createGain();
+    hammerGain.gain.setValueAtTime(0.0001, now);
+    hammerGain.gain.linearRampToValueAtTime(0.12, now + 0.001);
+    hammerGain.gain.exponentialRampToValueAtTime(0.001, now + 0.015);
+    hammer.connect(hammerGain);
+    hammerGain.connect(this.sfxGain!);
+    hammer.start(now);
+    hammer.stop(now + 0.02);
   }
 
   /**
