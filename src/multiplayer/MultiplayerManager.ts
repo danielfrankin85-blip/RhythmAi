@@ -97,6 +97,9 @@ export class MultiplayerManager {
   private opponentScore: PlayerScore | null = null;
   private hasFinished = false;
   private opponentFinished = false;
+  private joinRoomResolve: (() => void) | null = null;
+  private joinRoomReject: ((error: Error) => void) | null = null;
+  private joinRoomTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // ── Public getters ─────────────────────────────────────────────────────
 
@@ -195,26 +198,31 @@ export class MultiplayerManager {
 
       // IMPORTANT: Wait for the data channel to be fully open before proceeding.
       // PeerJS fires 'connection' on the host before the WebRTC channel is ready.
+      let openHandled = false;
+      const openTimeout = setTimeout(() => {
+        if (!openHandled && !conn.open) {
+          conn.close();
+          this.conn = null;
+          this.emit({ kind: 'error', message: 'Guest connection failed to establish' });
+        }
+      }, 15000);
+
       const onOpen = () => {
+        if (openHandled) return;
+        openHandled = true;
+        clearTimeout(openTimeout);
         this.setupDataChannel();
-        this.emit({ kind: 'opponent-connected' });
-        this.setState('waiting-song');
+        // Don't emit opponent-connected yet! Wait for guest to confirm via handshake.
+        // Send a ready ping - when guest responds, THEN we're connected.
+        this.send({ type: 'ping' });
       };
 
-      if (conn.open) {
+      conn.on('open', onOpen);
+      conn.on('close', () => clearTimeout(openTimeout));
+
+      // If already open (rare but possible), call onOpen
+      if (conn.open && !openHandled) {
         onOpen();
-      } else {
-        conn.on('open', onOpen);
-        // If the connection fails to open within 15 s, clean up
-        const openTimeout = setTimeout(() => {
-          if (!conn.open) {
-            conn.close();
-            this.conn = null;
-            this.emit({ kind: 'error', message: 'Guest connection failed to establish' });
-          }
-        }, 15000);
-        conn.on('open', () => clearTimeout(openTimeout));
-        conn.on('close', () => clearTimeout(openTimeout));
       }
     });
   }
@@ -230,6 +238,31 @@ export class MultiplayerManager {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
 
+      // Store callbacks for handshake completion
+      this.joinRoomResolve = () => {
+        if (settled) return;
+        settled = true;
+        if (this.joinRoomTimeout) {
+          clearTimeout(this.joinRoomTimeout);
+          this.joinRoomTimeout = null;
+        }
+        this.joinRoomResolve = null;
+        this.joinRoomReject = null;
+        resolve();
+      };
+
+      this.joinRoomReject = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        if (this.joinRoomTimeout) {
+          clearTimeout(this.joinRoomTimeout);
+          this.joinRoomTimeout = null;
+        }
+        this.joinRoomResolve = null;
+        this.joinRoomReject = null;
+        reject(err);
+      };
+
       this.peer = new Peer({ debug: 0 });
 
       this.peer.on('open', () => {
@@ -238,36 +271,40 @@ export class MultiplayerManager {
 
         this.conn.on('open', () => {
           if (settled) return;
-          settled = true;
+          // Channel is open - set up data handlers but DON'T resolve yet
+          // Wait for ping from host to confirm bidirectional handshake
           this.setupDataChannel();
-          this.emit({ kind: 'opponent-connected' });
-          this.setState('waiting-song');
-          resolve();
+          
+          // Start timeout waiting for ping
+          this.joinRoomTimeout = setTimeout(() => {
+            if (this.joinRoomReject) {
+              this.emit({ kind: 'error', message: 'Handshake timeout. Host did not respond.' });
+              this.joinRoomReject(new Error('Handshake timeout'));
+            }
+          }, 10000);
         });
 
         this.conn.on('error', (err) => {
-          if (settled) return;
-          settled = true;
-          this.emit({ kind: 'error', message: `Failed to connect: ${err.message}` });
-          reject(err);
-        });
-
-        this.conn.on('close', () => {
-          if (!settled) {
-            settled = true;
-            this.emit({ kind: 'error', message: 'Connection closed before it could open. Check the room code.' });
-            reject(new Error('Connection closed early'));
+          if (this.joinRoomReject) {
+            this.emit({ kind: 'error', message: `Failed to connect: ${err.message}` });
+            this.joinRoomReject(err);
           }
         });
 
-        // Timeout if connection doesn't open
+        this.conn.on('close', () => {
+          if (this.joinRoomReject) {
+            this.emit({ kind: 'error', message: 'Connection closed before it could open. Check the room code.' });
+            this.joinRoomReject(new Error('Connection closed early'));
+          }
+        });
+
+        // Timeout if connection doesn't open at all
         setTimeout(() => {
-          if (!settled) {
-            settled = true;
+          if (this.joinRoomReject) {
             this.conn?.close();
             this.conn = null;
             this.emit({ kind: 'error', message: 'Connection timed out. Check the room code and try again.' });
-            reject(new Error('Connection timeout'));
+            this.joinRoomReject(new Error('Connection timeout'));
           }
         }, 15000);
       });
@@ -344,9 +381,25 @@ export class MultiplayerManager {
         break;
 
       case 'ping':
+        // Guest receives this immediately after host's channel opens.
+        // Respond with pong AND confirm we're connected.
         this.send({ type: 'pong' });
+        if (this.role === 'guest' && this.lobbyState === 'joining') {
+          // Complete the joinRoom handshake
+          if (this.joinRoomResolve) {
+            this.joinRoomResolve();
+          }
+          this.emit({ kind: 'opponent-connected' });
+          this.setState('waiting-song');
+        }
         break;
       case 'pong':
+        // Host receives this after guest confirms bidirectional channel.
+        // NOW we know both sides can communicate.
+        if (this.role === 'host' && this.lobbyState === 'creating') {
+          this.emit({ kind: 'opponent-connected' });
+          this.setState('waiting-song');
+        }
         break;
     }
   }
@@ -432,6 +485,12 @@ export class MultiplayerManager {
     this.opponentScore = null;
     this.hasFinished = false;
     this.opponentFinished = false;
+    if (this.joinRoomTimeout) {
+      clearTimeout(this.joinRoomTimeout);
+      this.joinRoomTimeout = null;
+    }
+    this.joinRoomResolve = null;
+    this.joinRoomReject = null;
     this.setState('idle');
   }
 }
