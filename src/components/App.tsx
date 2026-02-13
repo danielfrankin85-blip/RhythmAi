@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AudioEngine } from '../audio/AudioEngine';
 import { BeatmapGenerator, type Difficulty, type GeneratedBeatmap } from '../beatmap/BeatmapGenerator';
-import { GameEngine, GameEvent, TargetFPS, type ScoreState, HitJudgment } from '../engine/GameEngine';
+import { GameEngine, GameEvent, TargetFPS, type ScoreState, HitJudgment, type PerfectHitSound } from '../engine/GameEngine';
 import { SongSelect } from './Menu/SongSelect';
 import { Settings } from './Menu/Settings';
 import { GameUI } from './Game/GameUI';
@@ -10,6 +10,8 @@ import '../styles/global.css';
 import '../styles/components.css';
 
 type AppState = 'menu' | 'loading' | 'playing' | 'game-over';
+
+const PERFECT_HIT_SOUND_OPTIONS: PerfectHitSound[] = ['bass', 'guitar', 'drum', 'trumpet', 'synth'];
 
 interface SongBestRecord {
   songId: string;
@@ -44,6 +46,13 @@ export function App() {
   const [sfxVolume, setSfxVolume] = useState<number>(() => {
     const saved = localStorage.getItem('sfxVolume');
     return saved ? Number(saved) : 0.8;
+  });
+  const [perfectHitSound, setPerfectHitSound] = useState<PerfectHitSound>(() => {
+    const saved = localStorage.getItem('perfectHitSound');
+    if (saved && PERFECT_HIT_SOUND_OPTIONS.includes(saved as PerfectHitSound)) {
+      return saved as PerfectHitSound;
+    }
+    return 'bass';
   });
   const [keyBindings, setKeyBindings] = useState<string[]>(() => {
     const saved = localStorage.getItem('keyBindings');
@@ -260,6 +269,7 @@ export function App() {
       gameEngineRef.current = gameEngine;
       gameEngine.setMusicVolume(musicVolume);
       gameEngine.setSfxVolume(sfxVolume);
+      gameEngine.setPerfectHitSound(perfectHitSound);
 
       // Load beatmap
       gameEngine.loadBeatmap(beatmap.notes);
@@ -289,7 +299,7 @@ export function App() {
     } finally {
       setIsLoadingBeatmap(false);
     }
-  }, [createGameEngine, musicVolume, sfxVolume, startUIUpdates]);
+  }, [createGameEngine, musicVolume, perfectHitSound, sfxVolume, startUIUpdates]);
 
   // ── Restart ────────────────────────────────────────────────────────────
   const handleRestart = useCallback(async () => {
@@ -313,6 +323,7 @@ export function App() {
       gameEngineRef.current = gameEngine;
       gameEngine.setMusicVolume(musicVolume);
       gameEngine.setSfxVolume(sfxVolume);
+      gameEngine.setPerfectHitSound(perfectHitSound);
 
       // Load beatmap
       gameEngine.loadBeatmap(current.beatmap.notes);
@@ -338,7 +349,7 @@ export function App() {
       console.error('Failed to restart:', err);
       setAppState('menu');
     }
-  }, [createGameEngine, musicVolume, sfxVolume, startUIUpdates]);
+  }, [createGameEngine, musicVolume, perfectHitSound, sfxVolume, startUIUpdates]);
 
   // ── Main Menu ──────────────────────────────────────────────────────────
   const handleMainMenu = useCallback(() => {
@@ -378,6 +389,12 @@ export function App() {
     gameEngineRef.current?.setSfxVolume(clamped);
   }, []);
 
+  const handlePerfectHitSoundChange = useCallback((sound: PerfectHitSound) => {
+    setPerfectHitSound(sound);
+    localStorage.setItem('perfectHitSound', sound);
+    gameEngineRef.current?.setPerfectHitSound(sound);
+  }, []);
+
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
@@ -401,8 +418,10 @@ export function App() {
             songName={currentSongName}
             musicVolume={musicVolume}
             sfxVolume={sfxVolume}
+            perfectHitSound={perfectHitSound}
             onMusicVolumeChange={handleMusicVolumeChange}
             onSfxVolumeChange={handleSfxVolumeChange}
+            onPerfectHitSoundChange={handlePerfectHitSoundChange}
           />
         )}
         {appState === 'playing' && isPaused && (
@@ -452,6 +471,8 @@ export function App() {
           onMusicVolumeChange={handleMusicVolumeChange}
           sfxVolume={sfxVolume}
           onSfxVolumeChange={handleSfxVolumeChange}
+          perfectHitSound={perfectHitSound}
+          onPerfectHitSoundChange={handlePerfectHitSoundChange}
           onClose={handleCloseSettings}
         />
       )}

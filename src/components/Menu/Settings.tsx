@@ -1,5 +1,13 @@
 import React, { memo, useState } from 'react';
-import { TargetFPS } from '../../engine/GameEngine';
+import { TargetFPS, type PerfectHitSound } from '../../engine/GameEngine';
+
+const PERFECT_HIT_SOUND_OPTIONS: Array<{ value: PerfectHitSound; label: string }> = [
+  { value: 'bass', label: 'Bass Punch' },
+  { value: 'guitar', label: 'Guitar Pluck' },
+  { value: 'drum', label: 'Drum Hit' },
+  { value: 'trumpet', label: 'Trumpet Stab' },
+  { value: 'synth', label: 'Synth Pop' },
+];
 
 interface SettingsProps {
   currentFPS: TargetFPS;
@@ -10,6 +18,8 @@ interface SettingsProps {
   onMusicVolumeChange: (volume: number) => void;
   sfxVolume: number;
   onSfxVolumeChange: (volume: number) => void;
+  perfectHitSound: PerfectHitSound;
+  onPerfectHitSoundChange: (sound: PerfectHitSound) => void;
   onClose: () => void;
 }
 
@@ -21,7 +31,7 @@ interface SettingsProps {
  * - 100 FPS: Balanced performance and precision (recommended)
  * - 144 FPS: Maximum precision for high-refresh displays
  */
-export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, onClose }) => {
+export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, perfectHitSound, onPerfectHitSoundChange, onClose }) => {
   const [editingLane, setEditingLane] = useState<number | null>(null);
   
   const fpsOptions = [
@@ -142,6 +152,20 @@ export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange
                 onChange={(e) => onSfxVolumeChange(Number(e.target.value))}
               />
               <div className="settings__audio-value">{Math.round(sfxVolume * 100)}%</div>
+            </div>
+
+            <div className="settings__audio-row">
+              <div className="settings__audio-label">Perfect Hit Sound</div>
+              <select
+                className="settings__audio-select"
+                value={perfectHitSound}
+                onChange={(e) => onPerfectHitSoundChange(e.target.value as PerfectHitSound)}
+              >
+                {PERFECT_HIT_SOUND_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <div className="settings__audio-value" />
             </div>
           </div>
         </div>

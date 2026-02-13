@@ -45,6 +45,8 @@ import {
 // Re-export types so consumers can import from GameEngine directly
 export { GameState, GameEvent, HitJudgment, TargetFPS, type ScoreState };
 
+export type PerfectHitSound = 'bass' | 'guitar' | 'drum' | 'trumpet' | 'synth';
+
 // ── Default config ───────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: GameEngineConfig = {
@@ -105,6 +107,8 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   private sfxGain: GainNode | null = null;
   /** Current SFX volume (0..1). */
   private sfxVolume = 0.8;
+  /** Selected sound preset for perfect hits. */
+  private perfectHitSound: PerfectHitSound = 'bass';
   /** Volume dip timeout handle for miss effect. */
   private missDipTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Original music volume to restore after miss dip. */
@@ -200,6 +204,14 @@ export class GameEngine extends EventEmitter<GameEventMap> {
 
   getSfxVolume(): number {
     return this.sfxVolume;
+  }
+
+  setPerfectHitSound(sound: PerfectHitSound): void {
+    this.perfectHitSound = sound;
+  }
+
+  getPerfectHitSound(): PerfectHitSound {
+    return this.perfectHitSound;
   }
 
   /** Trigger canvas resize (call when canvas becomes visible). */
@@ -744,49 +756,24 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     const now = ctx.currentTime;
 
     if (judgment === HitJudgment.PERFECT) {
-      // ── PERFECT: Rich layered bass punch ──
-
-      // Layer 1: Deep sub-bass (40Hz sine) – the rumble
-      const sub = ctx.createOscillator();
-      sub.type = 'sine';
-      sub.frequency.setValueAtTime(40, now);
-      sub.frequency.exponentialRampToValueAtTime(25, now + 0.12);
-      const subGain = ctx.createGain();
-      subGain.gain.setValueAtTime(0, now);
-      subGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
-      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-      sub.connect(subGain);
-      subGain.connect(this.sfxGain!);
-      sub.start(now);
-      sub.stop(now + 0.15);
-
-      // Layer 2: Mid punch (80Hz triangle) – the thump
-      const mid = ctx.createOscillator();
-      mid.type = 'triangle';
-      mid.frequency.setValueAtTime(80, now);
-      mid.frequency.exponentialRampToValueAtTime(50, now + 0.08);
-      const midGain = ctx.createGain();
-      midGain.gain.setValueAtTime(0, now);
-      midGain.gain.linearRampToValueAtTime(0.25, now + 0.005);
-      midGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-      mid.connect(midGain);
-      midGain.connect(this.sfxGain!);
-      mid.start(now);
-      mid.stop(now + 0.12);
-
-      // Layer 3: Click/transient (200Hz square, very short) – the snap
-      const click = ctx.createOscillator();
-      click.type = 'square';
-      click.frequency.setValueAtTime(200, now);
-      click.frequency.exponentialRampToValueAtTime(60, now + 0.03);
-      const clickGain = ctx.createGain();
-      clickGain.gain.setValueAtTime(0, now);
-      clickGain.gain.linearRampToValueAtTime(0.12, now + 0.003);
-      clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
-      click.connect(clickGain);
-      clickGain.connect(this.sfxGain!);
-      click.start(now);
-      click.stop(now + 0.05);
+      switch (this.perfectHitSound) {
+        case 'guitar':
+          this.playPerfectGuitar(ctx, now);
+          break;
+        case 'drum':
+          this.playPerfectDrum(ctx, now);
+          break;
+        case 'trumpet':
+          this.playPerfectTrumpet(ctx, now);
+          break;
+        case 'synth':
+          this.playPerfectSynth(ctx, now);
+          break;
+        case 'bass':
+        default:
+          this.playPerfectBass(ctx, now);
+          break;
+      }
     } else {
       // ── GOOD: Lighter single thump ──
       const osc = ctx.createOscillator();
@@ -801,6 +788,158 @@ export class GameEngine extends EventEmitter<GameEventMap> {
       osc.start(now);
       osc.stop(now + 0.1);
     }
+  }
+
+  private playPerfectBass(ctx: AudioContext, now: number): void {
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(40, now);
+    sub.frequency.exponentialRampToValueAtTime(25, now + 0.12);
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0, now);
+    subGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    sub.connect(subGain);
+    subGain.connect(this.sfxGain!);
+    sub.start(now);
+    sub.stop(now + 0.15);
+
+    const mid = ctx.createOscillator();
+    mid.type = 'triangle';
+    mid.frequency.setValueAtTime(80, now);
+    mid.frequency.exponentialRampToValueAtTime(50, now + 0.08);
+    const midGain = ctx.createGain();
+    midGain.gain.setValueAtTime(0, now);
+    midGain.gain.linearRampToValueAtTime(0.25, now + 0.005);
+    midGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    mid.connect(midGain);
+    midGain.connect(this.sfxGain!);
+    mid.start(now);
+    mid.stop(now + 0.12);
+
+    const click = ctx.createOscillator();
+    click.type = 'square';
+    click.frequency.setValueAtTime(200, now);
+    click.frequency.exponentialRampToValueAtTime(60, now + 0.03);
+    const clickGain = ctx.createGain();
+    clickGain.gain.setValueAtTime(0, now);
+    clickGain.gain.linearRampToValueAtTime(0.12, now + 0.003);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    click.connect(clickGain);
+    clickGain.connect(this.sfxGain!);
+    click.start(now);
+    click.stop(now + 0.05);
+  }
+
+  private playPerfectGuitar(ctx: AudioContext, now: number): void {
+    const body = ctx.createOscillator();
+    body.type = 'triangle';
+    body.frequency.setValueAtTime(196, now);
+    body.frequency.exponentialRampToValueAtTime(170, now + 0.16);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(0.0001, now);
+    bodyGain.gain.linearRampToValueAtTime(0.22, now + 0.006);
+    bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    body.connect(bodyGain);
+    bodyGain.connect(this.sfxGain!);
+    body.start(now);
+    body.stop(now + 0.22);
+
+    const pick = ctx.createOscillator();
+    pick.type = 'sawtooth';
+    pick.frequency.setValueAtTime(880, now);
+    pick.frequency.exponentialRampToValueAtTime(420, now + 0.04);
+    const pickGain = ctx.createGain();
+    pickGain.gain.setValueAtTime(0.0001, now);
+    pickGain.gain.linearRampToValueAtTime(0.1, now + 0.002);
+    pickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    pick.connect(pickGain);
+    pickGain.connect(this.sfxGain!);
+    pick.start(now);
+    pick.stop(now + 0.06);
+  }
+
+  private playPerfectDrum(ctx: AudioContext, now: number): void {
+    const kick = ctx.createOscillator();
+    kick.type = 'sine';
+    kick.frequency.setValueAtTime(145, now);
+    kick.frequency.exponentialRampToValueAtTime(45, now + 0.09);
+    const kickGain = ctx.createGain();
+    kickGain.gain.setValueAtTime(0.0001, now);
+    kickGain.gain.linearRampToValueAtTime(0.34, now + 0.003);
+    kickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    kick.connect(kickGain);
+    kickGain.connect(this.sfxGain!);
+    kick.start(now);
+    kick.stop(now + 0.12);
+
+    const snap = ctx.createOscillator();
+    snap.type = 'square';
+    snap.frequency.setValueAtTime(340, now);
+    snap.frequency.exponentialRampToValueAtTime(180, now + 0.02);
+    const snapGain = ctx.createGain();
+    snapGain.gain.setValueAtTime(0.0001, now);
+    snapGain.gain.linearRampToValueAtTime(0.12, now + 0.002);
+    snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+    snap.connect(snapGain);
+    snapGain.connect(this.sfxGain!);
+    snap.start(now);
+    snap.stop(now + 0.04);
+  }
+
+  private playPerfectTrumpet(ctx: AudioContext, now: number): void {
+    const tone = ctx.createOscillator();
+    tone.type = 'sawtooth';
+    tone.frequency.setValueAtTime(262, now);
+    tone.frequency.exponentialRampToValueAtTime(330, now + 0.12);
+    const toneGain = ctx.createGain();
+    toneGain.gain.setValueAtTime(0.0001, now);
+    toneGain.gain.linearRampToValueAtTime(0.2, now + 0.008);
+    toneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+    tone.connect(toneGain);
+    toneGain.connect(this.sfxGain!);
+    tone.start(now);
+    tone.stop(now + 0.17);
+
+    const overtone = ctx.createOscillator();
+    overtone.type = 'square';
+    overtone.frequency.setValueAtTime(524, now);
+    const overtoneGain = ctx.createGain();
+    overtoneGain.gain.setValueAtTime(0.0001, now);
+    overtoneGain.gain.linearRampToValueAtTime(0.06, now + 0.01);
+    overtoneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    overtone.connect(overtoneGain);
+    overtoneGain.connect(this.sfxGain!);
+    overtone.start(now);
+    overtone.stop(now + 0.15);
+  }
+
+  private playPerfectSynth(ctx: AudioContext, now: number): void {
+    const lead = ctx.createOscillator();
+    lead.type = 'square';
+    lead.frequency.setValueAtTime(392, now);
+    lead.frequency.exponentialRampToValueAtTime(523, now + 0.08);
+    const leadGain = ctx.createGain();
+    leadGain.gain.setValueAtTime(0.0001, now);
+    leadGain.gain.linearRampToValueAtTime(0.18, now + 0.004);
+    leadGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    lead.connect(leadGain);
+    leadGain.connect(this.sfxGain!);
+    lead.start(now);
+    lead.stop(now + 0.13);
+
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(98, now);
+    sub.frequency.exponentialRampToValueAtTime(82, now + 0.1);
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.12, now + 0.005);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    sub.connect(subGain);
+    subGain.connect(this.sfxGain!);
+    sub.start(now);
+    sub.stop(now + 0.15);
   }
 
   /**

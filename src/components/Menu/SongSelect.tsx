@@ -42,8 +42,13 @@ async function fetchYouTubeAudio(videoId: string): Promise<YTStreamResult> {
     signal: AbortSignal.timeout(30000),
   });
 
+  const contentType = resp.headers.get('content-type') ?? '';
+  const isJson = contentType.includes('application/json');
+  const data = isJson ? await resp.json().catch(() => null) : null;
+
   if (!resp.ok) {
-    const body = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+    const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
+    const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
     throw new Error(
       body.error ||
       'Could not extract audio from this YouTube video.\n\n' +
@@ -52,11 +57,16 @@ async function fetchYouTubeAudio(videoId: string): Promise<YTStreamResult> {
     );
   }
 
-  const data = await resp.json();
+  if (!data || typeof data !== 'object' || !('audioUrl' in data)) {
+    throw new Error(
+      'YouTube API returned an invalid response in local dev. Restart `npm run dev` so /api proxy is applied, then try again.'
+    );
+  }
+
   return {
-    title: data.title ?? `YouTube – ${videoId}`,
-    audioUrl: data.audioUrl,
-    duration: data.duration ?? 0,
+    title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
+    audioUrl: (data as { audioUrl: string }).audioUrl,
+    duration: (data as { duration?: number }).duration ?? 0,
   };
 }
 

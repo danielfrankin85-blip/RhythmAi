@@ -726,6 +726,16 @@
   accent-color: var(--color-info);
 }
 
+.game-volume-controls__select {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.9);
+  border: var(--border-width) solid rgba(255, 255, 255, 0.4);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+}
+
 /* ─── Scoreboard ──────────────────────────────────────────────────────────── */
 
 .scoreboard {
@@ -1286,6 +1296,16 @@
 .settings__audio-slider {
   width: 100%;
   accent-color: var(--color-info);
+}
+
+.settings__audio-select {
+  width: 100%;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
 }
 
 .settings__audio-value {
