@@ -74,6 +74,36 @@ type EventHandler = (event: MultiplayerEvent) => void;
 
 const PEER_PREFIX = 'rhythmai-mp-';
 
+// ICE server configuration with STUN + TURN for NAT/firewall traversal
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:global.relay.metered.ca:80',
+      username: '83eebabf8b4cce9d5dbcb649',
+      credential: '2D7JvfkOQtBdYW3R',
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+      username: '83eebabf8b4cce9d5dbcb649',
+      credential: '2D7JvfkOQtBdYW3R',
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:443',
+      username: '83eebabf8b4cce9d5dbcb649',
+      credential: '2D7JvfkOQtBdYW3R',
+    },
+    {
+      urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+      username: '83eebabf8b4cce9d5dbcb649',
+      credential: '2D7JvfkOQtBdYW3R',
+    },
+  ],
+};
+
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars
   let code = '';
@@ -143,7 +173,7 @@ export class MultiplayerManager {
       let settled = false;
       const peerId = PEER_PREFIX + this.roomCode;
       console.log('[MP] createRoom: Creating peer with ID:', peerId);
-      this.peer = new Peer(peerId, { debug: 2 });
+      this.peer = new Peer(peerId, { debug: 2, config: ICE_CONFIG });
 
       this.peer.on('open', () => {
         console.log('[MP] createRoom: Peer opened with ID:', peerId);
@@ -164,7 +194,7 @@ export class MultiplayerManager {
           this.peer?.destroy();
           const newPeerId = PEER_PREFIX + this.roomCode;
           console.log('[MP] createRoom: Retrying with new peer ID:', newPeerId);
-          this.peer = new Peer(newPeerId, { debug: 2 });
+          this.peer = new Peer(newPeerId, { debug: 2, config: ICE_CONFIG });
           this.peer.on('open', () => {
             if (settled) return;
             settled = true;
@@ -293,7 +323,7 @@ export class MultiplayerManager {
         reject(err);
       };
 
-      this.peer = new Peer({ debug: 2 });
+      this.peer = new Peer({ debug: 2, config: ICE_CONFIG });
 
       this.peer.on('open', () => {
         console.log('[MP] joinRoom: Guest peer opened with ID:', this.peer!.id);
