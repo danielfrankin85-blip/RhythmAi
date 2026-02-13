@@ -126,23 +126,26 @@ function monitorICE(conn: DataConnection, label: string): void {
 }
 
 function attachICEListeners(pc: RTCPeerConnection, label: string): void {
-  console.log('[MP]', label, 'Initial ICE state:', pc.iceConnectionState, '| Gathering:', pc.iceGatheringState);
-  pc.oniceconnectionstatechange = () => {
+  console.log('[MP]', label, 'Initial ICE state:', pc.iceConnectionState, '| Gathering:', pc.iceGatheringState, '| Connection:', pc.connectionState);
+  // IMPORTANT: Use addEventListener, NOT property assignment (e.g. pc.onicecandidate = ...).
+  // PeerJS uses the on* properties internally to trickle ICE candidates.
+  // Overwriting them breaks WebRTC negotiation entirely.
+  pc.addEventListener('iceconnectionstatechange', () => {
     console.log('[MP]', label, 'ICE connection state →', pc.iceConnectionState);
-  };
-  pc.onicegatheringstatechange = () => {
+  });
+  pc.addEventListener('icegatheringstatechange', () => {
     console.log('[MP]', label, 'ICE gathering state →', pc.iceGatheringState);
-  };
-  pc.onicecandidate = (e) => {
+  });
+  pc.addEventListener('icecandidate', (e: RTCPeerConnectionIceEvent) => {
     if (e.candidate) {
       console.log('[MP]', label, 'ICE candidate:', e.candidate.type, e.candidate.protocol, e.candidate.address);
     } else {
       console.log('[MP]', label, 'ICE candidate gathering complete');
     }
-  };
-  pc.onconnectionstatechange = () => {
+  });
+  pc.addEventListener('connectionstatechange', () => {
     console.log('[MP]', label, 'Connection state →', pc.connectionState);
-  };
+  });
 }
 
 function generateRoomCode(): string {
