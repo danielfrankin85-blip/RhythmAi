@@ -169,6 +169,13 @@ const BUILTIN_SONGS = [
   { id: 'b10', name: 'NIWA - Teno and More', path: '/music/NIWA_FULL_SHOWCASE_-_Teno_and_More_320k.mp3' },
   { id: 'b11', name: 'Slava Song', path: '/music/Omer_Adam_feat._Arisa_-_Tel_Aviv_320k.mp3' },
   { id: 'b13', name: 'Lil Tecca - Dark Thoughts', path: '/music/Lil_Tecca_-_Dark_Thoughts_(Official_Video)_320k.mp3' },
+  { id: 'b15', name: 'Airplane Mode', path: '/music/Airplane_Mode_320k.mp3' },
+  { id: 'b16', name: "ANRI - I Can't Stop The Loneliness", path: '/music/ANRI_-_I_Can%27t_Stop_The_Loneliness_320k.mp3' },
+  { id: 'b17', name: 'Hi-Fi Set - Sky Restaurant', path: '/music/Hi_Fi_Set_-_Sky_Restaurant_320k.mp3' },
+  { id: 'b18', name: 'Imogen Heap - Headlock', path: '/music/Imogen_Heap_-_Headlock_(Lyrics)_320k.mp3' },
+  { id: 'b19', name: 'RAYE - Where Is My Husband', path: '/music/RAYE_-_Where_Is_My_Husband_320k.mp3' },
+  { id: 'b20', name: 'Emotional Prism', path: '/music/%E3%83%9F%E3%82%AB%E3%83%85%E3%82%ADBIGWAVE_-_Emotional_Prism_%E6%84%9F%E6%83%85%E7%9A%84%E3%81%AA%E3%83%97%E3%83%AA%E3%82%BA%E3%83%A0_320k.mp3' },
+  { id: 'b21', name: 'Yasuha - Flyday Chinatown', path: '/music/Yasuha_-_Flyday_Chinatown_320k.mp3' },
 ];
 
 // ── Types ────────────────────────────────────────────────────────────────────

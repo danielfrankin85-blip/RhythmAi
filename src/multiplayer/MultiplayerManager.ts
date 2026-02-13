@@ -75,34 +75,75 @@ type EventHandler = (event: MultiplayerEvent) => void;
 const PEER_PREFIX = 'rhythmai-mp-';
 
 // ICE server configuration with STUN + TURN for NAT/firewall traversal
+// Uses Open Relay Project free TURN servers (https://www.metered.ca/tools/openrelay)
 const ICE_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.relay.metered.ca:80' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
     {
-      urls: 'turn:global.relay.metered.ca:80',
-      username: '83eebabf8b4cce9d5dbcb649',
-      credential: '2D7JvfkOQtBdYW3R',
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
     },
     {
-      urls: 'turn:global.relay.metered.ca:80?transport=tcp',
-      username: '83eebabf8b4cce9d5dbcb649',
-      credential: '2D7JvfkOQtBdYW3R',
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
     },
     {
-      urls: 'turn:global.relay.metered.ca:443',
-      username: '83eebabf8b4cce9d5dbcb649',
-      credential: '2D7JvfkOQtBdYW3R',
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
     },
     {
-      urls: 'turns:global.relay.metered.ca:443?transport=tcp',
-      username: '83eebabf8b4cce9d5dbcb649',
-      credential: '2D7JvfkOQtBdYW3R',
+      urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
     },
   ],
 };
+
+/** Log ICE connection state changes on the underlying RTCPeerConnection */
+function monitorICE(conn: DataConnection, label: string): void {
+  // PeerJS exposes the underlying RTCPeerConnection via peerConnection
+  const pc = (conn as any).peerConnection as RTCPeerConnection | undefined;
+  if (!pc) {
+    // peerConnection may not exist yet; try again after a short delay
+    setTimeout(() => {
+      const pcRetry = (conn as any).peerConnection as RTCPeerConnection | undefined;
+      if (pcRetry) {
+        attachICEListeners(pcRetry, label);
+      } else {
+        console.warn('[MP]', label, 'Could not access peerConnection for ICE monitoring');
+      }
+    }, 500);
+    return;
+  }
+  attachICEListeners(pc, label);
+}
+
+function attachICEListeners(pc: RTCPeerConnection, label: string): void {
+  console.log('[MP]', label, 'Initial ICE state:', pc.iceConnectionState, '| Gathering:', pc.iceGatheringState);
+  pc.oniceconnectionstatechange = () => {
+    console.log('[MP]', label, 'ICE connection state →', pc.iceConnectionState);
+  };
+  pc.onicegatheringstatechange = () => {
+    console.log('[MP]', label, 'ICE gathering state →', pc.iceGatheringState);
+  };
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      console.log('[MP]', label, 'ICE candidate:', e.candidate.type, e.candidate.protocol, e.candidate.address);
+    } else {
+      console.log('[MP]', label, 'ICE candidate gathering complete');
+    }
+  };
+  pc.onconnectionstatechange = () => {
+    console.log('[MP]', label, 'Connection state →', pc.connectionState);
+  };
+}
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars
@@ -252,6 +293,9 @@ export class MultiplayerManager {
       }
       this.conn = conn;
 
+      // Monitor ICE connection state on host side
+      monitorICE(conn, 'HOST');
+
       // IMPORTANT: Wait for the data channel to be fully open before proceeding.
       // PeerJS fires 'connection' on the host before the WebRTC channel is ready.
       let openHandled = false;
@@ -337,6 +381,9 @@ export class MultiplayerManager {
           type: this.conn.type,
           metadata: this.conn.metadata
         });
+
+        // Monitor ICE connection state on guest side
+        monitorICE(this.conn, 'GUEST');
 
         this.conn.on('open', () => {
           console.log('[MP] joinRoom: Connection channel opened, waiting for ping from host');
