@@ -103,6 +103,8 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   // ── SFX ──────────────────────────────────────────────────────────────────
   /** Shared gain for hit SFX so we can control volume independently. */
   private sfxGain: GainNode | null = null;
+  /** Current SFX volume (0..1). */
+  private sfxVolume = 0.8;
   /** Volume dip timeout handle for miss effect. */
   private missDipTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Original music volume to restore after miss dip. */
@@ -170,6 +172,34 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   setKeyBindings(bindings: string[]): void {
     this.config.keyBindings = bindings;
     this.input.setKeyBindings(bindings);
+  }
+
+  /** Update music volume (0..1), used by miss-dip restoration too. */
+  setMusicVolume(volume: number): void {
+    const clamped = Math.max(0, Math.min(1, volume));
+    this.originalMusicVolume = clamped;
+    if (!this.missDipTimeout) {
+      this.audioEngine.setVolume(clamped);
+    }
+  }
+
+  getMusicVolume(): number {
+    return this.originalMusicVolume;
+  }
+
+  /** Update hit/perfect SFX volume (0..1). */
+  setSfxVolume(volume: number): void {
+    const clamped = Math.max(0, Math.min(1, volume));
+    this.sfxVolume = clamped;
+
+    const ctx = this.audioEngine.getAudioContext();
+    if (this.sfxGain && ctx) {
+      this.sfxGain.gain.setValueAtTime(this.sfxVolume, ctx.currentTime);
+    }
+  }
+
+  getSfxVolume(): number {
+    return this.sfxVolume;
   }
 
   /** Trigger canvas resize (call when canvas becomes visible). */
@@ -707,6 +737,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     // Lazy-create SFX gain node
     if (!this.sfxGain) {
       this.sfxGain = ctx.createGain();
+      this.sfxGain.gain.setValueAtTime(this.sfxVolume, ctx.currentTime);
       this.sfxGain.connect(ctx.destination);
     }
 

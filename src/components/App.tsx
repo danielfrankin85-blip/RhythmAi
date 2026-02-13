@@ -11,6 +11,13 @@ import '../styles/components.css';
 
 type AppState = 'menu' | 'loading' | 'playing' | 'game-over';
 
+interface SongBestRecord {
+  songId: string;
+  songName: string;
+  bestScore: number;
+  bestAccuracy: number;
+}
+
 const INITIAL_SCORE: ScoreState = {
   score: 0,
   combo: 0,
@@ -30,6 +37,14 @@ export function App() {
   const [beatmapProgress, setBeatmapProgress] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [currentFPS, setCurrentFPS] = useState<TargetFPS>(TargetFPS.FPS_100);
+  const [musicVolume, setMusicVolume] = useState<number>(() => {
+    const saved = localStorage.getItem('musicVolume');
+    return saved ? Number(saved) : 0.7;
+  });
+  const [sfxVolume, setSfxVolume] = useState<number>(() => {
+    const saved = localStorage.getItem('sfxVolume');
+    return saved ? Number(saved) : 0.8;
+  });
   const [keyBindings, setKeyBindings] = useState<string[]>(() => {
     const saved = localStorage.getItem('keyBindings');
     return saved ? JSON.parse(saved) : ['d', 'f', 'j', 'k'];
@@ -42,11 +57,25 @@ export function App() {
   const [lastPoints, setLastPoints] = useState(0);
   const [lastMultiplier, setLastMultiplier] = useState(1);
   const [currentSongName, setCurrentSongName] = useState('');
+  const [isPaused, setIsPaused] = useState(false);
+  const [songBestRecords, setSongBestRecords] = useState<Record<string, SongBestRecord>>(() => {
+    try {
+      const raw = localStorage.getItem('songBestRecords');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
 
   const scoreRef = useRef<ScoreState>(score);
   const progressRef = useRef<number>(0);
-  const currentSongRef = useRef<{ file: File; difficulty: Difficulty; beatmap: GeneratedBeatmap } | null>(null);
+  const currentSongRef = useRef<{ file: File; difficulty: Difficulty; beatmap: GeneratedBeatmap; songId: string; songName: string } | null>(null);
+  const currentSongMetaRef = useRef<{ songId: string; songName: string } | null>(null);
   const uiIntervalRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('songBestRecords', JSON.stringify(songBestRecords));
+  }, [songBestRecords]);
 
   // ── Helper: attach event listeners to a game engine ────────────────────
   const attachListeners = useCallback((engine: GameEngine) => {
@@ -79,11 +108,39 @@ export function App() {
       });
     });
 
+    engine.on(GameEvent.STATE_CHANGE, (payload: unknown) => {
+      const { next } = payload as { next: string };
+      setIsPaused(next === 'paused');
+    });
+
     engine.on(GameEvent.GAME_OVER, (payload: unknown) => {
       const { score } = payload as { score: ScoreState };
       const copy = { ...score, judgments: { ...score.judgments } };
       scoreRef.current = copy;
       setScore(copy);
+      const meta = currentSongMetaRef.current;
+      if (meta) {
+        setSongBestRecords((prev) => {
+          const existing = prev[meta.songId];
+          const isBetter =
+            !existing ||
+            copy.score > existing.bestScore ||
+            (copy.score === existing.bestScore && copy.accuracy > existing.bestAccuracy);
+
+          if (!isBetter) return prev;
+
+          return {
+            ...prev,
+            [meta.songId]: {
+              songId: meta.songId,
+              songName: meta.songName,
+              bestScore: copy.score,
+              bestAccuracy: copy.accuracy,
+            },
+          };
+        });
+      }
+      setIsPaused(false);
       setAppState('game-over');
     });
   }, []);
@@ -162,18 +219,21 @@ export function App() {
   }, []);
 
   // ── Start Game ─────────────────────────────────────────────────────────
-  const handleStartGame = useCallback(async (file: File, difficulty: Difficulty) => {
+  const handleStartGame = useCallback(async (file: File, difficulty: Difficulty, songId: string, songName: string) => {
     try {
       setIsLoadingBeatmap(true);
       setBeatmapProgress(0);
-      setCurrentSongName(file.name);
+      setCurrentSongName(songName);
+      currentSongMetaRef.current = { songId, songName };
+      setIsPaused(false);
       setAppState('loading');
 
       // Create AudioEngine if needed
       if (!audioEngineRef.current) {
-        audioEngineRef.current = new AudioEngine({ audioOffset: 0, volume: 0.7 });
+        audioEngineRef.current = new AudioEngine({ audioOffset: 0, volume: musicVolume });
       }
       const audioEngine = audioEngineRef.current;
+      audioEngine.setVolume(musicVolume);
 
       // Load audio file
       await audioEngine.load(file);
@@ -189,7 +249,7 @@ export function App() {
       });
 
       // Store for restart
-      currentSongRef.current = { file, difficulty, beatmap };
+      currentSongRef.current = { file, difficulty, beatmap, songId, songName };
 
       // Dispose old game engine if any
       gameEngineRef.current?.dispose();
@@ -198,6 +258,8 @@ export function App() {
       const gameEngine = createGameEngine(audioEngine);
       if (!gameEngine) throw new Error('Canvas not available');
       gameEngineRef.current = gameEngine;
+      gameEngine.setMusicVolume(musicVolume);
+      gameEngine.setSfxVolume(sfxVolume);
 
       // Load beatmap
       gameEngine.loadBeatmap(beatmap.notes);
@@ -227,7 +289,7 @@ export function App() {
     } finally {
       setIsLoadingBeatmap(false);
     }
-  }, [createGameEngine, startUIUpdates]);
+  }, [createGameEngine, musicVolume, sfxVolume, startUIUpdates]);
 
   // ── Restart ────────────────────────────────────────────────────────────
   const handleRestart = useCallback(async () => {
@@ -249,6 +311,8 @@ export function App() {
       const gameEngine = createGameEngine(audioEngine);
       if (!gameEngine) throw new Error('Canvas not available');
       gameEngineRef.current = gameEngine;
+      gameEngine.setMusicVolume(musicVolume);
+      gameEngine.setSfxVolume(sfxVolume);
 
       // Load beatmap
       gameEngine.loadBeatmap(current.beatmap.notes);
@@ -257,6 +321,9 @@ export function App() {
       setScore({ ...INITIAL_SCORE });
       setProgress(0);
       setLastJudgment(null);
+      setCurrentSongName(current.songName);
+      currentSongMetaRef.current = { songId: current.songId, songName: current.songName };
+      setIsPaused(false);
 
       // Start
       audioEngine.seek(0);
@@ -271,7 +338,7 @@ export function App() {
       console.error('Failed to restart:', err);
       setAppState('menu');
     }
-  }, [createGameEngine, startUIUpdates]);
+  }, [createGameEngine, musicVolume, sfxVolume, startUIUpdates]);
 
   // ── Main Menu ──────────────────────────────────────────────────────────
   const handleMainMenu = useCallback(() => {
@@ -280,6 +347,8 @@ export function App() {
     gameEngineRef.current?.dispose();
     gameEngineRef.current = null;
     currentSongRef.current = null;
+    currentSongMetaRef.current = null;
+    setIsPaused(false);
     setAppState('menu');
   }, [stopUIUpdates]);
 
@@ -292,6 +361,21 @@ export function App() {
     setKeyBindings(bindings);
     localStorage.setItem('keyBindings', JSON.stringify(bindings));
     gameEngineRef.current?.setKeyBindings(bindings);
+  }, []);
+
+  const handleMusicVolumeChange = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    setMusicVolume(clamped);
+    localStorage.setItem('musicVolume', String(clamped));
+    audioEngineRef.current?.setVolume(clamped);
+    gameEngineRef.current?.setMusicVolume(clamped);
+  }, []);
+
+  const handleSfxVolumeChange = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    setSfxVolume(clamped);
+    localStorage.setItem('sfxVolume', String(clamped));
+    gameEngineRef.current?.setSfxVolume(clamped);
   }, []);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
@@ -315,7 +399,16 @@ export function App() {
             lastPoints={lastPoints}
             lastMultiplier={lastMultiplier}
             songName={currentSongName}
+            musicVolume={musicVolume}
+            sfxVolume={sfxVolume}
+            onMusicVolumeChange={handleMusicVolumeChange}
+            onSfxVolumeChange={handleSfxVolumeChange}
           />
+        )}
+        {appState === 'playing' && isPaused && (
+          <div className="pause-menu-actions">
+            <div className="pause-menu-return" onClick={handleMainMenu}>Return to Menu</div>
+          </div>
         )}
         {appState === 'game-over' && (
           <GameOver score={score} onRestart={handleRestart} onMainMenu={handleMainMenu} />
@@ -329,10 +422,10 @@ export function App() {
             <p className="menu__subtitle">Play your music, test your skills</p>
           </div>
           <div className="menu__content">
-            <SongSelect onStartGame={handleStartGame} isLoading={isLoadingBeatmap} />
+            <SongSelect onStartGame={handleStartGame} isLoading={isLoadingBeatmap} bestRecords={songBestRecords} />
           </div>
           <div className="menu__footer">
-            <button className="btn" onClick={handleOpenSettings}>
+            <button className="btn menu__settings-btn" onClick={handleOpenSettings}>
               ⚙️ Settings
             </button>
           </div>
@@ -355,6 +448,10 @@ export function App() {
           onFPSChange={handleFPSChange}
           keyBindings={keyBindings}
           onKeyBindingsChange={handleKeyBindingsChange}
+          musicVolume={musicVolume}
+          onMusicVolumeChange={handleMusicVolumeChange}
+          sfxVolume={sfxVolume}
+          onSfxVolumeChange={handleSfxVolumeChange}
           onClose={handleCloseSettings}
         />
       )}

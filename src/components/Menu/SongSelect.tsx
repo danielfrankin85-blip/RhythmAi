@@ -194,11 +194,12 @@ function prettySongName(filename: string): string {
 // ── Component ────────────────────────────────────────────────────────────────
 
 interface SongSelectProps {
-  onStartGame: (file: File, difficulty: Difficulty) => void;
+  onStartGame: (file: File, difficulty: Difficulty, songId: string, songName: string) => void;
   isLoading: boolean;
+  bestRecords: Record<string, { bestScore: number; bestAccuracy: number }>;
 }
 
-export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => {
+export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords }) => {
   const [selectedSong, setSelectedSong] = useState<SongEntry | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [isFetching, setIsFetching] = useState(false);
@@ -359,7 +360,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => 
         });
       }
 
-      onStartGame(file, difficulty);
+      onStartGame(file, difficulty, selectedSong.id, selectedSong.name);
     } catch (err) {
       console.error('Failed to load song:', err);
       alert(`Error loading song: ${(err as Error).message}`);
@@ -529,6 +530,11 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading }) => 
             <div className="song-list__icon">{song.type === 'builtin' ? '🎵' : '📁'}</div>
             <div className="song-list__info">
               <div className="song-list__name">{song.name}</div>
+              {bestRecords[song.id] && (
+                <div className="song-list__best">
+                  Best: {bestRecords[song.id].bestScore.toLocaleString()} • {bestRecords[song.id].bestAccuracy.toFixed(2)}%
+                </div>
+              )}
               {song.type === 'custom' && (
                 <div className="song-list__meta">{formatFileSize(song.size)}</div>
               )}

@@ -110,6 +110,10 @@
   justify-content: center;
 }
 
+.menu__settings-btn {
+  color: #000;
+}
+
 /* ─── Song Select ─────────────────────────────────────────────────────────── */
 
 .song-select {
@@ -277,6 +281,13 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: 2px;
+}
+
+.song-list__best {
+  font-size: var(--font-size-xs);
+  color: var(--color-info);
+  margin-top: 2px;
+  font-weight: var(--font-weight-medium);
 }
 
 .song-list__delete {
@@ -659,6 +670,60 @@
 
 .game__ui > * {
   pointer-events: auto;
+}
+
+.pause-menu-actions {
+  position: absolute;
+  top: 58%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 55;
+}
+
+.pause-menu-return {
+  color: white;
+  font-size: 24px;
+  font-weight: bold;
+  font-family: Arial, sans-serif;
+  cursor: pointer;
+  text-align: center;
+  user-select: none;
+}
+
+.game-volume-controls {
+  position: absolute;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  width: min(320px, 38vw);
+  background: rgba(10, 10, 15, 0.78);
+  border: var(--border-width) solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-lg);
+  z-index: 40;
+}
+
+.game-volume-controls__row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  margin-bottom: var(--space-sm);
+}
+
+.game-volume-controls__row:last-child {
+  margin-bottom: 0;
+}
+
+.game-volume-controls__label {
+  font-size: var(--font-size-xs);
+  color: #ffffff;
+  font-weight: var(--font-weight-semibold);
+}
+
+.game-volume-controls__slider {
+  width: 100%;
+  accent-color: var(--color-info);
 }
 
 /* ─── Scoreboard ──────────────────────────────────────────────────────────── */
@@ -1198,6 +1263,36 @@
   font-size: var(--font-size-sm);
   margin: 0 0 var(--space-lg) 0;
   line-height: 1.6;
+}
+
+.settings__audio-controls {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.settings__audio-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 56px;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.settings__audio-label {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.settings__audio-slider {
+  width: 100%;
+  accent-color: var(--color-info);
+}
+
+.settings__audio-value {
+  text-align: right;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
 }
 
 .settings__fps-options {

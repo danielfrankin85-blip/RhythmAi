@@ -6,6 +6,10 @@ interface SettingsProps {
   onFPSChange: (fps: TargetFPS) => void;
   keyBindings: string[];
   onKeyBindingsChange: (bindings: string[]) => void;
+  musicVolume: number;
+  onMusicVolumeChange: (volume: number) => void;
+  sfxVolume: number;
+  onSfxVolumeChange: (volume: number) => void;
   onClose: () => void;
 }
 
@@ -17,7 +21,7 @@ interface SettingsProps {
  * - 100 FPS: Balanced performance and precision (recommended)
  * - 144 FPS: Maximum precision for high-refresh displays
  */
-export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, onClose }) => {
+export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, onClose }) => {
   const [editingLane, setEditingLane] = useState<number | null>(null);
   
   const fpsOptions = [
@@ -103,6 +107,43 @@ export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange
           >
             Reset to Default (D F J K)
           </button>
+        </div>
+
+        <div className="settings__section">
+          <h3 className="settings__section-title">Audio</h3>
+          <p className="settings__section-desc">
+            Adjust music and hit-beat sound levels. Changes apply immediately.
+          </p>
+
+          <div className="settings__audio-controls">
+            <div className="settings__audio-row">
+              <div className="settings__audio-label">Music Volume</div>
+              <input
+                className="settings__audio-slider"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={musicVolume}
+                onChange={(e) => onMusicVolumeChange(Number(e.target.value))}
+              />
+              <div className="settings__audio-value">{Math.round(musicVolume * 100)}%</div>
+            </div>
+
+            <div className="settings__audio-row">
+              <div className="settings__audio-label">Perfect Beat Volume</div>
+              <input
+                className="settings__audio-slider"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={sfxVolume}
+                onChange={(e) => onSfxVolumeChange(Number(e.target.value))}
+              />
+              <div className="settings__audio-value">{Math.round(sfxVolume * 100)}%</div>
+            </div>
+          </div>
         </div>
 
         <div className="settings__info">
