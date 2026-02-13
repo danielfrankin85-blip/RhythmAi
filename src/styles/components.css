@@ -634,6 +634,11 @@
   box-shadow: var(--glow-red);
 }
 
+.difficulty-option.deadly.selected {
+  border-color: #9333ea;
+  box-shadow: 0 0 16px rgba(147, 51, 234, 0.5);
+}
+
 .difficulty-option__name {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);

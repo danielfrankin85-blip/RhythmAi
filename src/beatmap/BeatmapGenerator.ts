@@ -21,7 +21,7 @@ import { BeatDetector, type DetectedBeat, type BeatDetectionResult } from '../au
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
-export type Difficulty = 'easy' | 'medium' | 'hard' | 'extreme';
+export type Difficulty = 'easy' | 'medium' | 'hard' | 'extreme' | 'deadly';
 
 /** Hold note duration categories. */
 export type HoldDuration = 'short' | 'medium' | 'long';
@@ -125,15 +125,26 @@ const DIFFICULTY_PROFILES: Record<Difficulty, DifficultyProfile> = {
     minSustainDuration: 0.35,
   },
   extreme: {
-    sensitivity: 0.82,
-    minLaneGap: 0.12,
-    minGlobalGap: 0.08,
+    sensitivity: 0.75,
+    minLaneGap: 0.15,
+    minGlobalGap: 0.1,
     maxChordSize: 3,
-    densityFactor: 0.92,
+    densityFactor: 0.85,
     activeLanes: 4,
-    strengthFloor: 0.08,
-    holdFraction: 0.85,
-    minSustainDuration: 0.25,
+    strengthFloor: 0.12,
+    holdFraction: 0.8,
+    minSustainDuration: 0.3,
+  },
+  deadly: {
+    sensitivity: 0.88,
+    minLaneGap: 0.10,
+    minGlobalGap: 0.06,
+    maxChordSize: 4,
+    densityFactor: 0.95,
+    activeLanes: 4,
+    strengthFloor: 0.06,
+    holdFraction: 0.9,
+    minSustainDuration: 0.2,
   },
 };
 

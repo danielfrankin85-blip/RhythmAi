@@ -14,7 +14,7 @@ interface MultiplayerWaitingRoomProps {
   onLeave: () => void;
 }
 
-const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard', 'extreme'];
+const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard', 'extreme', 'deadly'];
 
 export const MultiplayerWaitingRoom = memo<MultiplayerWaitingRoomProps>(({
   role,

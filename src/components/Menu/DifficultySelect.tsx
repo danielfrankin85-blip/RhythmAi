@@ -12,6 +12,7 @@ const DIFFICULTIES: DifficultyOption[] = [
   { value: 'medium', name: 'Medium', description: 'Moderate density, 4 lanes' },
   { value: 'hard', name: 'Hard', description: 'Dense notes, 4 lanes' },
   { value: 'extreme', name: 'Extreme', description: 'Insane density + chords' },
+  { value: 'deadly', name: 'Deadly', description: 'Pure chaos, good luck' },
 ];
 
 interface DifficultySelectProps {
