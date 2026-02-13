@@ -4,39 +4,6 @@ import { DifficultySelect } from './DifficultySelect';
 
 // ── YouTube helpers ──────────────────────────────────────────────────────────
 
-/** Extract a YouTube video ID from any common URL format */
-function extractYouTubeId(input: string): string | null {
-  const trimmed = input.trim();
-  const normalizeMaybeId = (value: string | null): string | null => {
-    if (!value) return null;
-    const cleaned = value.trim().replace(/[^A-Za-z0-9_-]/g, '');
-    return /^[A-Za-z0-9_-]{11}$/.test(cleaned) ? cleaned : null;
-  };
-
-  // Direct ID (11 chars, alphanumeric + - + _)
-  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
-
-  try {
-    const url = new URL(trimmed);
-    // youtu.be/<id>
-    if (url.hostname === 'youtu.be') {
-      return normalizeMaybeId(url.pathname.slice(1).split('/')[0] || null);
-    }
-    // youtube.com/watch?v=<id>
-    const v = normalizeMaybeId(url.searchParams.get('v'));
-    if (v) return v;
-    // youtube.com/embed/<id> or /shorts/<id>
-    const parts = url.pathname.split('/').filter(Boolean);
-    if ((parts[0] === 'embed' || parts[0] === 'shorts') && parts[1]) {
-      return normalizeMaybeId(parts[1]);
-    }
-  } catch { /* not a valid URL — fall through */ }
-
-  // Regex fallback
-  const match = trimmed.match(/(?:v=|\/|embed\/|shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-  return match ? match[1] : null;
-}
-
 /** Public Piped / Invidious instances we try in order (all have CORS support) */
 // Proxied through our own /api/youtube serverless route to avoid CORS issues
 
@@ -233,11 +200,13 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [tab, setTab] = useState<'library' | 'custom' | 'youtube'>('library');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // YouTube-specific state
-  const [ytUrl, setYtUrl] = useState('');
-  const [ytStatus, setYtStatus] = useState<'idle' | 'resolving' | 'downloading' | 'error'>('idle');
+  // YouTube search state
+  const [ytQuery, setYtQuery] = useState('');
+  const [ytResults, setYtResults] = useState<Array<{ videoId: string; title: string; thumbnail: string; uploaderName: string; duration: number }>>([]);
+  const [ytStatus, setYtStatus] = useState<'idle' | 'searching' | 'resolving' | 'downloading' | 'error'>('idle');
   const [ytError, setYtError] = useState<string | null>(null);
   const [ytTitle, setYtTitle] = useState<string | null>(null);
+  const [ytActiveId, setYtActiveId] = useState<string | null>(null);
 
   // Load persisted custom songs from IndexedDB on mount
   useEffect(() => {
@@ -315,19 +284,37 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
     if (selectedSong?.id === id) setSelectedSong(null);
   }, [selectedSong]);
 
-  // ── YouTube link handler ──────────────────────────────────────────────
-  const handleYouTubeLoad = useCallback(async () => {
-    const videoId = extractYouTubeId(ytUrl);
-    if (!videoId) {
-      setYtError('Invalid YouTube URL. Paste a link like https://youtube.com/watch?v=... or https://youtu.be/...');
-      setYtStatus('error');
-      return;
-    }
-
+  // ── YouTube search handler ────────────────────────────────────────────
+  const handleYouTubeSearch = useCallback(async () => {
+    const q = ytQuery.trim();
+    if (!q) return;
     try {
+      setYtStatus('searching');
+      setYtError(null);
+      setYtResults([]);
+      const resp = await fetch(`/api/youtube-search?q=${encodeURIComponent(q)}`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(body.error || 'Search failed');
+      }
+      const data = await resp.json();
+      setYtResults(data.results ?? []);
+      setYtStatus('idle');
+    } catch (err) {
+      setYtError((err as Error).message);
+      setYtStatus('error');
+    }
+  }, [ytQuery]);
+
+  // ── YouTube pick handler (click a search result) ──────────────────────
+  const handleYouTubePick = useCallback(async (videoId: string, title: string) => {
+    try {
+      setYtActiveId(videoId);
       setYtStatus('resolving');
       setYtError(null);
-      setYtTitle(null);
+      setYtTitle(title);
 
       // Step 1: Resolve stream URL
       const result = await fetchYouTubeAudio(videoId);
@@ -337,7 +324,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       // Step 2: Download the audio blob
       const blob = await downloadYouTubeBlob(result.audioUrl);
 
-      // Step 3: Persist to IndexedDB like a regular custom song
+      // Step 3: Persist to IndexedDB
       const song: StoredSong = {
         id: `yt-${videoId}-${Date.now()}`,
         name: result.title,
@@ -352,13 +339,14 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       setSelectedSong({ type: 'custom', id: song.id, name: song.name, blob: song.blob, size: song.size });
       setTab('custom');
       setYtStatus('idle');
-      setYtUrl('');
+      setYtActiveId(null);
       setYtTitle(null);
     } catch (err) {
       setYtError((err as Error).message);
       setYtStatus('error');
+      setYtActiveId(null);
     }
-  }, [ytUrl]);
+  }, []);
 
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -473,15 +461,15 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
         </button>
       </div>
 
-      {/* ── YouTube link input ───────────────────────────────────────────── */}
+      {/* ── YouTube search ────────────────────────────────────────────── */}
       {tab === 'youtube' && (
         <div className="yt-section">
           <div className="yt-section__header">
             <div className="yt-section__icon">▶</div>
             <div>
-              <div className="yt-section__title">Import from YouTube</div>
+              <div className="yt-section__title">Search YouTube</div>
               <div className="yt-section__subtitle">
-                Paste any YouTube link — the AI will extract the audio, analyze it, and generate a beatmap
+                Search for any song — click a result to download, analyze, and play
               </div>
             </div>
           </div>
@@ -490,34 +478,25 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
             <input
               type="text"
               className="yt-section__input"
-              placeholder="https://youtube.com/watch?v=... or https://youtu.be/..."
-              value={ytUrl}
-              onChange={(e) => { setYtUrl(e.target.value); setYtError(null); setYtStatus('idle'); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && ytUrl.trim() && ytStatus === 'idle') handleYouTubeLoad(); }}
+              placeholder="Search for a song..."
+              value={ytQuery}
+              onChange={(e) => { setYtQuery(e.target.value); setYtError(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && ytQuery.trim() && ytStatus !== 'searching') handleYouTubeSearch(); }}
               disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
             />
             <button
               className="yt-section__btn"
-              onClick={handleYouTubeLoad}
-              disabled={!ytUrl.trim() || ytStatus === 'resolving' || ytStatus === 'downloading'}
+              onClick={handleYouTubeSearch}
+              disabled={!ytQuery.trim() || ytStatus === 'searching' || ytStatus === 'resolving' || ytStatus === 'downloading'}
             >
-              {ytStatus === 'resolving' ? '🔍 Resolving...'
-                : ytStatus === 'downloading' ? '⬇ Downloading...'
-                : '🎵 Load Song'}
+              {ytStatus === 'searching' ? '🔍 Searching...' : '🔍 Search'}
             </button>
           </div>
 
-          {ytTitle && ytStatus === 'downloading' && (
+          {(ytStatus === 'resolving' || ytStatus === 'downloading') && ytTitle && (
             <div className="yt-section__progress">
               <div className="yt-section__progress-spinner" />
-              <span>Downloading: <strong>{ytTitle}</strong></span>
-            </div>
-          )}
-
-          {ytStatus === 'resolving' && (
-            <div className="yt-section__progress">
-              <div className="yt-section__progress-spinner" />
-              <span>Finding audio stream…</span>
+              <span>{ytStatus === 'resolving' ? 'Finding audio stream…' : <>Downloading: <strong>{ytTitle}</strong></>}</span>
             </div>
           )}
 
@@ -527,14 +506,46 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
             </div>
           )}
 
-          <div className="yt-section__tips">
-            <strong>Tips:</strong>
-            <ul>
-              <li>Works with regular videos, Shorts, and music videos</li>
-              <li>The song is saved to "My Songs" after download</li>
-              <li>Some region-locked or age-restricted videos may not work</li>
-            </ul>
-          </div>
+          {/* ── Search results ────────────────────────────────────────── */}
+          {ytResults.length > 0 && (
+            <div className="yt-results">
+              {ytResults.map((r) => {
+                const mins = Math.floor(r.duration / 60);
+                const secs = r.duration % 60;
+                const isActive = ytActiveId === r.videoId;
+                return (
+                  <button
+                    key={r.videoId}
+                    className={`yt-results__item ${isActive ? 'yt-results__item--active' : ''}`}
+                    onClick={() => handleYouTubePick(r.videoId, r.title)}
+                    disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
+                  >
+                    <img
+                      className="yt-results__thumb"
+                      src={r.thumbnail}
+                      alt=""
+                      loading="lazy"
+                    />
+                    <div className="yt-results__info">
+                      <div className="yt-results__title">{r.title}</div>
+                      <div className="yt-results__meta">
+                        {r.uploaderName}{r.duration > 0 ? ` • ${mins}:${secs.toString().padStart(2, '0')}` : ''}
+                      </div>
+                    </div>
+                    {isActive && (
+                      <div className="yt-results__spinner" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {ytResults.length === 0 && ytStatus === 'idle' && ytQuery.trim() && (
+            <div className="yt-section__tips">
+              No results yet — hit Search or press Enter
+            </div>
+          )}
         </div>
       )}
 

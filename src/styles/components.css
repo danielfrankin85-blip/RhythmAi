@@ -578,6 +578,91 @@
   margin-bottom: 2px;
 }
 
+/* ─── YouTube Search Results ───────────────────────────────────────────────── */
+
+.yt-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: 400px;
+  overflow-y: auto;
+  margin-top: var(--space-sm);
+}
+
+.yt-results__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-primary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  width: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+.yt-results__item:hover:not(:disabled) {
+  background: var(--color-bg-elevated);
+  border-color: #ff4444;
+  transform: translateX(4px);
+}
+
+.yt-results__item--active {
+  border-color: var(--color-info);
+  background: rgba(52, 152, 219, 0.08);
+}
+
+.yt-results__item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.yt-results__thumb {
+  width: 80px;
+  height: 45px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  background: var(--color-bg-tertiary);
+}
+
+.yt-results__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.yt-results__title {
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+
+.yt-results__meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-results__spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(52, 152, 219, 0.3);
+  border-top-color: var(--color-info);
+  border-radius: 50%;
+  animation: ytSpin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
 /* ─── Difficulty Selector ─────────────────────────────────────────────────── */
 
 .difficulty-selector {
