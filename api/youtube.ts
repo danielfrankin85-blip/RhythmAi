@@ -13,6 +13,43 @@ const INVIDIOUS_INSTANCES = [
   'https://invidious.lunar.icu',
 ];
 
+function normalizeBase(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+async function getDynamicPipedInstances(): Promise<string[]> {
+  try {
+    const resp = await fetch('https://piped-instances.kavin.rocks/', {
+      signal: AbortSignal.timeout(8000),
+      headers: { 'User-Agent': 'RhythmAI/1.0' },
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json() as Array<{ api_url?: string }>;
+    return data
+      .map((instance) => instance.api_url)
+      .filter((apiUrl): apiUrl is string => Boolean(apiUrl))
+      .map(normalizeBase);
+  } catch {
+    return [];
+  }
+}
+
+async function getDynamicInvidiousInstances(): Promise<string[]> {
+  try {
+    const resp = await fetch('https://api.invidious.io/instances.json?sort_by=health', {
+      signal: AbortSignal.timeout(8000),
+      headers: { 'User-Agent': 'RhythmAI/1.0' },
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json() as Array<[string, { type?: string; api?: boolean; uri?: string }]>;
+    return data
+      .filter(([, meta]) => meta?.type === 'https' && meta?.api === true && !!meta?.uri)
+      .map(([, meta]) => normalizeBase(meta.uri!));
+  } catch {
+    return [];
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Allow any origin (our own site)
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -47,8 +84,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Fall through to public proxy instances below
   }
 
-  // ── Try Piped ──────────────────────────────────────────────────────────
-  for (const base of PIPED_INSTANCES) {
+  // ── Try Piped (dynamic list first, static fallback) ───────────────────
+  const pipedCandidates = Array.from(new Set([
+    ...(await getDynamicPipedInstances()),
+    ...PIPED_INSTANCES.map(normalizeBase),
+  ]));
+
+  for (const base of pipedCandidates) {
     try {
       const resp = await fetch(`${base}/streams/${videoId}`, {
         signal: AbortSignal.timeout(12000),
@@ -71,8 +113,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch { /* next instance */ }
   }
 
-  // ── Try Invidious ──────────────────────────────────────────────────────
-  for (const base of INVIDIOUS_INSTANCES) {
+  // ── Try Invidious (dynamic list first, static fallback) ───────────────
+  const invidiousCandidates = Array.from(new Set([
+    ...(await getDynamicInvidiousInstances()),
+    ...INVIDIOUS_INSTANCES.map(normalizeBase),
+  ]));
+
+  for (const base of invidiousCandidates) {
     try {
       const resp = await fetch(`${base}/api/v1/videos/${videoId}`, {
         signal: AbortSignal.timeout(12000),

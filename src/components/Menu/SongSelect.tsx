@@ -7,19 +7,29 @@ import { DifficultySelect } from './DifficultySelect';
 /** Extract a YouTube video ID from any common URL format */
 function extractYouTubeId(input: string): string | null {
   const trimmed = input.trim();
+  const normalizeMaybeId = (value: string | null): string | null => {
+    if (!value) return null;
+    const cleaned = value.trim().replace(/[^A-Za-z0-9_-]/g, '');
+    return /^[A-Za-z0-9_-]{11}$/.test(cleaned) ? cleaned : null;
+  };
+
   // Direct ID (11 chars, alphanumeric + - + _)
   if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
 
   try {
     const url = new URL(trimmed);
     // youtu.be/<id>
-    if (url.hostname === 'youtu.be') return url.pathname.slice(1).split('/')[0] || null;
+    if (url.hostname === 'youtu.be') {
+      return normalizeMaybeId(url.pathname.slice(1).split('/')[0] || null);
+    }
     // youtube.com/watch?v=<id>
-    const v = url.searchParams.get('v');
+    const v = normalizeMaybeId(url.searchParams.get('v'));
     if (v) return v;
     // youtube.com/embed/<id> or /shorts/<id>
     const parts = url.pathname.split('/').filter(Boolean);
-    if ((parts[0] === 'embed' || parts[0] === 'shorts') && parts[1]) return parts[1];
+    if ((parts[0] === 'embed' || parts[0] === 'shorts') && parts[1]) {
+      return normalizeMaybeId(parts[1]);
+    }
   } catch { /* not a valid URL — fall through */ }
 
   // Regex fallback
