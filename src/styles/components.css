@@ -2072,3 +2072,11 @@
   margin-right: var(--space-sm);
 }
 
+.mp-lobby__btn,
+.mp-lobby__btn--back,
+.mp-menu-btn,
+.mp-waiting__copy,
+.mp-waiting__leave {
+  color: #000 !important;
+}
+
