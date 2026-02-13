@@ -58,8 +58,39 @@
   --font-size-4xl: 3rem;
 
   --font-weight-normal: 400;
+  --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
+
+  /* ── Borders ────────────────────────────────────────────────────────── */
+  --border-width: 1px;
+  --border-width-thick: 2px;
+
+  /* ── Border radii ───────────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* ── Shadows ────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-2xl: 0 16px 48px rgba(0, 0, 0, 0.18);
+
+  /* ── Transitions ────────────────────────────────────────────────────── */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-normal: 300ms ease;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Glows ──────────────────────────────────────────────────────────── */
+  --glow-blue: 0 0 12px rgba(52, 152, 219, 0.45);
+  --glow-green: 0 0 12px rgba(46, 204, 113, 0.45);
+  --glow-yellow: 0 0 12px rgba(243, 196, 18, 0.45);
+  --glow-red: 0 0 12px rgba(231, 76, 60, 0.45);
+  --glow-perfect: 0 0 16px rgba(255, 215, 0, 0.6);
+  --glow-good: 0 0 12px rgba(144, 238, 144, 0.5);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
