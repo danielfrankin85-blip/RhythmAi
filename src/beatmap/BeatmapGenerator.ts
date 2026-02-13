@@ -782,8 +782,8 @@ export class BeatmapGenerator {
       // Probabilistic: only convert `holdFraction` of qualifying notes
       if (rng() > profile.holdFraction) continue;
 
-      // Don't create holds too close together (minimum 0.8s gap from last hold end)
-      if (note.time < lastHoldEnd + 0.8) continue;
+      // Don't create holds too close together
+      if (note.time < lastHoldEnd + 0.45) continue;
 
       // Calculate hold duration = remaining sustain from note's time to segment end
       let holdDuration = sustain.end - note.time;
@@ -811,6 +811,96 @@ export class BeatmapGenerator {
       };
       holdCount++;
       lastHoldEnd = note.time + holdDuration;
+    }
+
+    const minHoldTarget = Math.max(1, Math.floor(notes.length * this.getMinimumHoldRatio(profile)));
+    if (holdCount < minHoldTarget) {
+      return this.ensureMinimumHolds(notes, profile, rng, minHoldTarget - holdCount);
+    }
+
+    return notes;
+  }
+
+  private getMinimumHoldRatio(profile: DifficultyProfile): number {
+    if (profile.minLaneGap >= 0.6) return 0.04;   // easy
+    if (profile.minLaneGap >= 0.3) return 0.07;   // medium
+    return 0.10;                                  // hard
+  }
+
+  private ensureMinimumHolds(
+    notes: BeatmapNote[],
+    profile: DifficultyProfile,
+    rng: () => number,
+    needed: number,
+  ): BeatmapNote[] {
+    if (needed <= 0) return notes;
+
+    const holdCandidates = notes
+      .map((note, index) => ({ note, index }))
+      .filter(({ note }) => !note.holdDuration)
+      .sort((a, b) => a.note.time - b.note.time);
+
+    if (holdCandidates.length === 0) return notes;
+
+    const laneTimes = new Map<number, number[]>();
+    for (const note of notes) {
+      if (!laneTimes.has(note.lane)) laneTimes.set(note.lane, []);
+      laneTimes.get(note.lane)!.push(note.time);
+    }
+    for (const times of laneTimes.values()) {
+      times.sort((a, b) => a - b);
+    }
+
+    const maxByDifficulty = profile.minLaneGap >= 0.6
+      ? { min: 0.35, max: 0.7 }
+      : profile.minLaneGap >= 0.3
+        ? { min: 0.4, max: 1.0 }
+        : { min: 0.45, max: 1.35 };
+
+    const usedWindows: Array<{ start: number; end: number }> = [];
+
+    const getNextTimeInLane = (lane: number, after: number): number => {
+      const times = laneTimes.get(lane) ?? [];
+      for (const time of times) {
+        if (time > after + 0.01) return time;
+      }
+      return Infinity;
+    };
+
+    let added = 0;
+    for (let i = 0; i < holdCandidates.length && added < needed; i++) {
+      const { note, index } = holdCandidates[i];
+
+      if (i % 2 === 1 && rng() < 0.5) continue;
+
+      const nextTime = getNextTimeInLane(note.lane, note.time);
+      const maxDurationByLane = Math.max(0, nextTime - note.time - 0.15);
+      const durationCap = Math.min(maxByDifficulty.max, maxDurationByLane);
+      if (durationCap < maxByDifficulty.min) continue;
+
+      const candidateDuration = Math.max(
+        maxByDifficulty.min,
+        Math.min(durationCap, maxByDifficulty.min + rng() * (durationCap - maxByDifficulty.min)),
+      );
+
+      const start = note.time;
+      const end = note.time + candidateDuration;
+      const overlaps = usedWindows.some((window) => start < window.end + 0.35 && end > window.start - 0.2);
+      if (overlaps) continue;
+
+      let holdType: HoldDuration;
+      if (candidateDuration <= 0.7) holdType = 'short';
+      else if (candidateDuration <= 1.5) holdType = 'medium';
+      else holdType = 'long';
+
+      notes[index] = {
+        ...note,
+        holdDuration: candidateDuration,
+        holdType,
+      };
+
+      usedWindows.push({ start, end });
+      added++;
     }
 
     return notes;
@@ -919,16 +1009,28 @@ export class BeatmapGenerator {
    * Keeps the earlier note.
    */
   private enforceMinLaneGap(notes: BeatmapNote[], minGap: number): BeatmapNote[] {
-    // Track last note time per lane
-    const lastTime = new Map<number, number>();
+    // Track last kept note index per lane so we can prefer hold notes on conflicts
+    const lastKeptIndexByLane = new Map<number, number>();
     const sorted = [...notes].sort((a, b) => a.time - b.time || a.lane - b.lane);
     const result: BeatmapNote[] = [];
 
     for (const note of sorted) {
-      const prev = lastTime.get(note.lane) ?? -Infinity;
+      const lastIndex = lastKeptIndexByLane.get(note.lane);
+      const prev = lastIndex !== undefined ? result[lastIndex]?.time ?? -Infinity : -Infinity;
+
       if (note.time - prev >= minGap) {
         result.push(note);
-        lastTime.set(note.lane, note.time);
+        lastKeptIndexByLane.set(note.lane, result.length - 1);
+        continue;
+      }
+
+      const prevNote = lastIndex !== undefined ? result[lastIndex] : null;
+      const currentIsHold = Boolean(note.holdDuration && note.holdDuration > 0);
+      const prevIsHold = Boolean(prevNote?.holdDuration && prevNote.holdDuration > 0);
+
+      // If two notes conflict, prefer a hold note over a tap note.
+      if (lastIndex !== undefined && prevNote && currentIsHold && !prevIsHold) {
+        result[lastIndex] = note;
       }
     }
     return result;

@@ -20,6 +20,13 @@ interface SongBestRecord {
   bestAccuracy: number;
 }
 
+interface SongRunRecord {
+  score: number;
+  accuracy: number;
+  maxCombo: number;
+  playedAt: number;
+}
+
 const INITIAL_SCORE: ScoreState = {
   score: 0,
   combo: 0,
@@ -66,10 +73,19 @@ export function App() {
   const [lastPoints, setLastPoints] = useState(0);
   const [lastMultiplier, setLastMultiplier] = useState(1);
   const [currentSongName, setCurrentSongName] = useState('');
+  const [currentSongId, setCurrentSongId] = useState('');
   const [isPaused, setIsPaused] = useState(false);
   const [songBestRecords, setSongBestRecords] = useState<Record<string, SongBestRecord>>(() => {
     try {
       const raw = localStorage.getItem('songBestRecords');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [songRunHistory, setSongRunHistory] = useState<Record<string, SongRunRecord[]>>(() => {
+    try {
+      const raw = localStorage.getItem('songRunHistory');
       return raw ? JSON.parse(raw) : {};
     } catch {
       return {};
@@ -85,6 +101,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('songBestRecords', JSON.stringify(songBestRecords));
   }, [songBestRecords]);
+
+  useEffect(() => {
+    localStorage.setItem('songRunHistory', JSON.stringify(songRunHistory));
+  }, [songRunHistory]);
 
   // ── Helper: attach event listeners to a game engine ────────────────────
   const attachListeners = useCallback((engine: GameEngine) => {
@@ -129,6 +149,30 @@ export function App() {
       setScore(copy);
       const meta = currentSongMetaRef.current;
       if (meta) {
+        setSongRunHistory((prev) => {
+          const runs = prev[meta.songId] ?? [];
+          const updatedRuns = [
+            {
+              score: copy.score,
+              accuracy: copy.accuracy,
+              maxCombo: copy.maxCombo,
+              playedAt: Date.now(),
+            },
+            ...runs,
+          ]
+            .sort((a, b) => {
+              if (b.score !== a.score) return b.score - a.score;
+              if (b.accuracy !== a.accuracy) return b.accuracy - a.accuracy;
+              return b.playedAt - a.playedAt;
+            })
+            .slice(0, 10);
+
+          return {
+            ...prev,
+            [meta.songId]: updatedRuns,
+          };
+        });
+
         setSongBestRecords((prev) => {
           const existing = prev[meta.songId];
           const isBetter =
@@ -233,6 +277,7 @@ export function App() {
       setIsLoadingBeatmap(true);
       setBeatmapProgress(0);
       setCurrentSongName(songName);
+      setCurrentSongId(songId);
       currentSongMetaRef.current = { songId, songName };
       setIsPaused(false);
       setAppState('loading');
@@ -333,6 +378,7 @@ export function App() {
       setProgress(0);
       setLastJudgment(null);
       setCurrentSongName(current.songName);
+      setCurrentSongId(current.songId);
       currentSongMetaRef.current = { songId: current.songId, songName: current.songName };
       setIsPaused(false);
 
@@ -359,6 +405,7 @@ export function App() {
     gameEngineRef.current = null;
     currentSongRef.current = null;
     currentSongMetaRef.current = null;
+    setCurrentSongId('');
     setIsPaused(false);
     setAppState('menu');
   }, [stopUIUpdates]);
@@ -419,6 +466,7 @@ export function App() {
             musicVolume={musicVolume}
             sfxVolume={sfxVolume}
             perfectHitSound={perfectHitSound}
+            leaderboardRuns={songRunHistory[currentSongId] ?? []}
             onMusicVolumeChange={handleMusicVolumeChange}
             onSfxVolumeChange={handleSfxVolumeChange}
             onPerfectHitSoundChange={handlePerfectHitSoundChange}

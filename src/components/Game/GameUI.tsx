@@ -27,12 +27,18 @@ interface GameUIProps {
   musicVolume: number;
   sfxVolume: number;
   perfectHitSound: PerfectHitSound;
+  leaderboardRuns: Array<{
+    score: number;
+    accuracy: number;
+    maxCombo: number;
+    playedAt: number;
+  }>;
   onMusicVolumeChange: (volume: number) => void;
   onSfxVolumeChange: (volume: number) => void;
   onPerfectHitSoundChange: (sound: PerfectHitSound) => void;
 }
 
-export const GameUI = memo<GameUIProps>(({ score, progress, lastJudgment, judgmentKey, lastPoints, lastMultiplier, songName, musicVolume, sfxVolume, perfectHitSound, onMusicVolumeChange, onSfxVolumeChange, onPerfectHitSoundChange }) => {
+export const GameUI = memo<GameUIProps>(({ score, progress, lastJudgment, judgmentKey, lastPoints, lastMultiplier, songName, musicVolume, sfxVolume, perfectHitSound, leaderboardRuns, onMusicVolumeChange, onSfxVolumeChange, onPerfectHitSoundChange }) => {
   const isSlava = songName.toLowerCase().includes('tel_aviv') || songName.toLowerCase().includes('slava');
   return (
     <div className="game__ui">
@@ -45,6 +51,22 @@ export const GameUI = memo<GameUIProps>(({ score, progress, lastJudgment, judgme
         points={lastPoints} 
         multiplier={lastMultiplier} 
       />
+      <div className="map-leaderboard">
+        <div className="map-leaderboard__title">Leaderboard</div>
+        {leaderboardRuns.length === 0 ? (
+          <div className="map-leaderboard__empty">No past runs yet</div>
+        ) : (
+          <div className="map-leaderboard__list">
+            {leaderboardRuns.slice(0, 5).map((run, index) => (
+              <div key={`${run.playedAt}-${index}`} className="map-leaderboard__row">
+                <span className="map-leaderboard__rank">#{index + 1}</span>
+                <span className="map-leaderboard__score">{run.score.toLocaleString()}</span>
+                <span className="map-leaderboard__acc">{run.accuracy.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <ProgressBar progress={progress} />
       <div className="game-volume-controls">
         <div className="game-volume-controls__row">
