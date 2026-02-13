@@ -10,6 +10,7 @@
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
     "@ybd-project/ytdl-core": "^6.0.8",
+    "peerjs": "^1.5.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

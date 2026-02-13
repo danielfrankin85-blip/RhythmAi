@@ -6,10 +6,15 @@ import { SongSelect } from './Menu/SongSelect';
 import { Settings } from './Menu/Settings';
 import { GameUI } from './Game/GameUI';
 import { GameOver } from './Game/GameOver';
+import { MultiplayerLobby } from './Menu/MultiplayerLobby';
+import { MultiplayerWaitingRoom } from './Menu/MultiplayerWaitingRoom';
+import { MultiplayerHUD } from './Game/MultiplayerHUD';
+import { MultiplayerResults } from './Game/MultiplayerResults';
+import { MultiplayerManager, type SongInfo, type PlayerScore, type LobbyState } from '../multiplayer/MultiplayerManager';
 import '../styles/global.css';
 import '../styles/components.css';
 
-type AppState = 'menu' | 'loading' | 'playing' | 'game-over';
+type AppState = 'menu' | 'loading' | 'playing' | 'game-over' | 'mp-lobby' | 'mp-waiting';
 
 const PERFECT_HIT_SOUND_OPTIONS: PerfectHitSound[] = ['bass', 'guitar', 'drum', 'trumpet', 'synth'];
 
@@ -98,6 +103,22 @@ export function App() {
   const currentSongMetaRef = useRef<{ songId: string; songName: string } | null>(null);
   const uiIntervalRef = useRef<number | null>(null);
 
+  // ── Multiplayer state ──────────────────────────────────────────────────
+  const mpManagerRef = useRef<MultiplayerManager | null>(null);
+  const [mpLobbyState, setMpLobbyState] = useState<LobbyState>('idle');
+  const [mpRoomCode, setMpRoomCode] = useState('');
+  const [mpRole, setMpRole] = useState<'host' | 'guest'>('host');
+  const [mpOpponentConnected, setMpOpponentConnected] = useState(false);
+  const [mpSongInfo, setMpSongInfo] = useState<SongInfo | null>(null);
+  const [mpOpponentScore, setMpOpponentScore] = useState<PlayerScore | null>(null);
+  const [mpConnecting, setMpConnecting] = useState(false);
+  const [mpError, setMpError] = useState<string | null>(null);
+  const [mpActive, setMpActive] = useState(false);
+  const [mpMyFinalScore, setMpMyFinalScore] = useState<PlayerScore | null>(null);
+  const [mpOpponentFinalScore, setMpOpponentFinalScore] = useState<PlayerScore | null>(null);
+  const mpSongFileRef = useRef<File | null>(null);
+  const mpDifficultyRef = useRef<Difficulty>('medium');
+
   useEffect(() => {
     localStorage.setItem('songBestRecords', JSON.stringify(songBestRecords));
   }, [songBestRecords]);
@@ -112,6 +133,16 @@ export function App() {
       const { score } = payload as { score: ScoreState };
       // Deep-copy so React sees a new reference on every update
       scoreRef.current = { ...score, judgments: { ...score.judgments } };
+      // Sync score to multiplayer opponent if active
+      if (mpManagerRef.current && mpManagerRef.current.getState() === 'playing') {
+        mpManagerRef.current.updateScore({
+          score: score.score,
+          combo: score.combo,
+          maxCombo: score.maxCombo,
+          accuracy: score.accuracy,
+          judgments: { ...score.judgments },
+        });
+      }
     });
 
     engine.on(GameEvent.NOTE_HIT, (payload: unknown) => {
@@ -194,6 +225,18 @@ export function App() {
         });
       }
       setIsPaused(false);
+      // If multiplayer, signal finish and store final score
+      if (mpManagerRef.current && mpManagerRef.current.getState() === 'playing') {
+        const finalPs: PlayerScore = {
+          score: copy.score,
+          combo: copy.combo,
+          maxCombo: copy.maxCombo,
+          accuracy: copy.accuracy,
+          judgments: { ...copy.judgments },
+        };
+        setMpMyFinalScore(finalPs);
+        mpManagerRef.current.finishGame(finalPs);
+      }
       setAppState('game-over');
     });
   }, []);
@@ -328,6 +371,10 @@ export function App() {
       await audioEngine.play();
       gameEngine.start();
       startUIUpdates(audioEngine);
+      // Start multiplayer score sync if in MP mode
+      if (mpManagerRef.current && mpActive) {
+        mpManagerRef.current.startScoreSync();
+      }
       setAppState('playing');
       
       // Resize canvas now that it's visible
@@ -445,6 +492,155 @@ export function App() {
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
+  // ── Multiplayer helpers ────────────────────────────────────────────────
+
+  const getMpManager = useCallback(() => {
+    if (!mpManagerRef.current) {
+      mpManagerRef.current = new MultiplayerManager();
+    }
+    return mpManagerRef.current;
+  }, []);
+
+  const setupMpListeners = useCallback((mgr: MultiplayerManager) => {
+    return mgr.on((event) => {
+      switch (event.kind) {
+        case 'state-change':
+          setMpLobbyState(event.state);
+          break;
+        case 'opponent-connected':
+          setMpOpponentConnected(true);
+          setMpError(null);
+          break;
+        case 'opponent-disconnected':
+          setMpOpponentConnected(false);
+          if (appState !== 'playing' && appState !== 'game-over') {
+            setMpError('Opponent disconnected');
+          }
+          break;
+        case 'song-info':
+          setMpSongInfo(event.data);
+          mpDifficultyRef.current = event.data.difficulty;
+          break;
+        case 'guest-ready':
+          // Host receives this
+          break;
+        case 'start-game': {
+          // Guest receives this — start playing
+          const file = mpSongFileRef.current;
+          if (file) {
+            const songId = `mp-${file.name}-${file.size}`;
+            const songName = file.name.replace(/\.[^/.]+$/, '');
+            handleStartGame(file, mpDifficultyRef.current, songId, songName);
+          }
+          break;
+        }
+        case 'opponent-score':
+          setMpOpponentScore({ ...event.data });
+          break;
+        case 'opponent-finished':
+          setMpOpponentFinalScore({ ...event.data });
+          break;
+        case 'error':
+          setMpError(event.message);
+          setMpConnecting(false);
+          break;
+      }
+    });
+  }, [appState, handleStartGame]);
+
+  const handleOpenMultiplayer = useCallback(() => {
+    setMpError(null);
+    setMpConnecting(false);
+    setMpOpponentConnected(false);
+    setMpSongInfo(null);
+    setMpOpponentScore(null);
+    setMpMyFinalScore(null);
+    setMpOpponentFinalScore(null);
+    setAppState('mp-lobby');
+  }, []);
+
+  const handleMpCreateGame = useCallback(async () => {
+    const mgr = getMpManager();
+    const unsub = setupMpListeners(mgr);
+    setMpConnecting(true);
+    setMpError(null);
+    setMpRole('host');
+    try {
+      const code = await mgr.createRoom();
+      setMpRoomCode(code);
+      setMpConnecting(false);
+      setMpActive(true);
+      setAppState('mp-waiting');
+    } catch {
+      setMpConnecting(false);
+      void unsub;
+    }
+  }, [getMpManager, setupMpListeners]);
+
+  const handleMpJoinGame = useCallback(async (code: string) => {
+    const mgr = getMpManager();
+    const unsub = setupMpListeners(mgr);
+    setMpConnecting(true);
+    setMpError(null);
+    setMpRole('guest');
+    setMpRoomCode(code);
+    try {
+      await mgr.joinRoom(code);
+      setMpConnecting(false);
+      setMpActive(true);
+      setAppState('mp-waiting');
+    } catch {
+      setMpConnecting(false);
+      void unsub;
+    }
+  }, [getMpManager, setupMpListeners]);
+
+  const handleMpSelectSong = useCallback((file: File, difficulty: Difficulty) => {
+    const mgr = mpManagerRef.current;
+    if (!mgr) return;
+    mpSongFileRef.current = file;
+    mpDifficultyRef.current = difficulty;
+    const songInfo: SongInfo = {
+      songName: file.name.replace(/\.[^/.]+$/, ''),
+      difficulty,
+      fileSize: file.size,
+    };
+    setMpSongInfo(songInfo);
+    mgr.sendSongInfo(songInfo);
+  }, []);
+
+  const handleMpGuestReady = useCallback((file: File) => {
+    const mgr = mpManagerRef.current;
+    if (!mgr) return;
+    mpSongFileRef.current = file;
+    mgr.sendGuestReady();
+  }, []);
+
+  const handleMpStartGame = useCallback(() => {
+    const mgr = mpManagerRef.current;
+    if (!mgr) return;
+    mgr.startGame();
+    // Host also starts playing
+    const file = mpSongFileRef.current;
+    if (file) {
+      const songId = `mp-${file.name}-${file.size}`;
+      const songName = file.name.replace(/\.[^/.]+$/, '');
+      handleStartGame(file, mpDifficultyRef.current, songId, songName);
+    }
+  }, [handleStartGame]);
+
+  const handleMpLeave = useCallback(() => {
+    mpManagerRef.current?.cleanup();
+    setMpActive(false);
+    setMpOpponentConnected(false);
+    setMpSongInfo(null);
+    setMpOpponentScore(null);
+    setMpMyFinalScore(null);
+    setMpOpponentFinalScore(null);
+    setMpError(null);
+    setAppState('menu');
+  }, []);
+
   // ── Render ─────────────────────────────────────────────────────────────
   const isPlaying = appState === 'playing' || appState === 'game-over';
 
@@ -455,30 +651,49 @@ export function App() {
       <div className="game" style={{ display: isPlaying ? undefined : 'none' }}>
         <canvas ref={canvasRef} className="game__canvas" />
         {appState === 'playing' && (
-          <GameUI
-            score={score}
-            progress={progress}
-            lastJudgment={lastJudgment}
-            judgmentKey={judgmentKey}
-            lastPoints={lastPoints}
-            lastMultiplier={lastMultiplier}
-            songName={currentSongName}
-            musicVolume={musicVolume}
-            sfxVolume={sfxVolume}
-            perfectHitSound={perfectHitSound}
-            leaderboardRuns={songRunHistory[currentSongId] ?? []}
-            onMusicVolumeChange={handleMusicVolumeChange}
-            onSfxVolumeChange={handleSfxVolumeChange}
-            onPerfectHitSoundChange={handlePerfectHitSoundChange}
-          />
+          <>
+            <GameUI
+              score={score}
+              progress={progress}
+              lastJudgment={lastJudgment}
+              judgmentKey={judgmentKey}
+              lastPoints={lastPoints}
+              lastMultiplier={lastMultiplier}
+              songName={currentSongName}
+              musicVolume={musicVolume}
+              sfxVolume={sfxVolume}
+              perfectHitSound={perfectHitSound}
+              leaderboardRuns={songRunHistory[currentSongId] ?? []}
+              onMusicVolumeChange={handleMusicVolumeChange}
+              onSfxVolumeChange={handleSfxVolumeChange}
+              onPerfectHitSoundChange={handlePerfectHitSoundChange}
+            />
+            {mpActive && (
+              <MultiplayerHUD opponentScore={mpOpponentScore} myScore={score.score} />
+            )}
+          </>
         )}
         {appState === 'playing' && isPaused && (
           <div className="pause-menu-actions">
             <div className="pause-menu-return" onClick={handleMainMenu}>Return to Menu</div>
           </div>
         )}
-        {appState === 'game-over' && (
+        {appState === 'game-over' && !mpActive && (
           <GameOver score={score} onRestart={handleRestart} onMainMenu={handleMainMenu} />
+        )}
+        {appState === 'game-over' && mpActive && (
+          <MultiplayerResults
+            myScore={mpMyFinalScore ?? {
+              score: score.score,
+              combo: score.combo,
+              maxCombo: score.maxCombo,
+              accuracy: score.accuracy,
+              judgments: { ...score.judgments },
+            }}
+            opponentScore={mpOpponentFinalScore}
+            onPlayAgain={handleRestart}
+            onMainMenu={handleMpLeave}
+          />
         )}
       </div>
 
@@ -492,10 +707,41 @@ export function App() {
             <SongSelect onStartGame={handleStartGame} isLoading={isLoadingBeatmap} bestRecords={songBestRecords} />
           </div>
           <div className="menu__footer">
+            <button className="btn mp-menu-btn" onClick={handleOpenMultiplayer}>
+              🎮 Multiplayer
+            </button>
             <button className="btn menu__settings-btn" onClick={handleOpenSettings}>
               ⚙️ Settings
             </button>
           </div>
+        </div>
+      )}
+
+      {appState === 'mp-lobby' && (
+        <div className="menu">
+          <MultiplayerLobby
+            onCreateGame={handleMpCreateGame}
+            onJoinGame={handleMpJoinGame}
+            onBack={() => setAppState('menu')}
+            isConnecting={mpConnecting}
+            error={mpError}
+          />
+        </div>
+      )}
+
+      {appState === 'mp-waiting' && (
+        <div className="menu">
+          <MultiplayerWaitingRoom
+            role={mpRole}
+            roomCode={mpRoomCode}
+            lobbyState={mpLobbyState}
+            songInfo={mpSongInfo}
+            opponentConnected={mpOpponentConnected}
+            onSelectSong={handleMpSelectSong}
+            onGuestReady={handleMpGuestReady}
+            onStartGame={handleMpStartGame}
+            onLeave={handleMpLeave}
+          />
         </div>
       )}
 
