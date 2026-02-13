@@ -1,21 +1,21 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   CSS Variables – Light theme with vibrant accents
+   CSS Variables – Theme System
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Color palette ──────────────────────────────────────────────────── */
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f8f9fa;
-  --color-bg-tertiary: #e9ecef;
-  --color-bg-elevated: #ffffff;
+  /* ── Color palette (Dark Mode - Default) ────────────────────────────── */
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #16161d;
+  --color-bg-tertiary: #1e1e28;
+  --color-bg-elevated: #22222e;
   
-  --color-text-primary: #000000;
-  --color-text-secondary: #000000;
-  --color-text-muted: #000000;
-  --color-text-disabled: #adb5bd;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e0e0e0;
+  --color-text-muted: #a0a0a0;
+  --color-text-disabled: #6b7280;
   
-  --color-border: rgba(0, 0, 0, 0.12);
-  --color-border-focus: rgba(0, 0, 0, 0.3);
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-focus: rgba(255, 255, 255, 0.3);
   
   /* Neon lane colors */
   --color-lane-0: #e74c3c;  /* red */
@@ -58,6 +58,24 @@
   --font-size-4xl: 3rem;
   
   --font-weight-normal: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+}
+
+/* ── Light Mode Theme ────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8f9fa;
+  --color-bg-tertiary: #e9ecef;
+  --color-bg-elevated: #ffffff;
+  
+  --color-text-primary: #000000;
+  --color-text-secondary: #1a1a1a;
+  --color-text-muted: #6b7280;
+  --color-text-disabled: #9ca3af;
+  
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-border-focus: rgba(0, 0, 0, 0.3);
   --font-weight-medium: 500;
   --font-weight-bold: 700;
   

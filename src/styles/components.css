@@ -909,13 +909,14 @@
   font-weight: var(--font-weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   margin-bottom: var(--space-sm);
 }
 
 .map-leaderboard__empty {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--color-text-primary);
+  opacity: 0.7;
 }
 
 .map-leaderboard__list {
@@ -943,7 +944,8 @@
 }
 
 .map-leaderboard__acc {
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+  opacity: 0.9;
 }
 
 .hit-feedback__text {
