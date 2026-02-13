@@ -65,6 +65,8 @@ export interface ActiveNote extends BeatmapNote {
   holdCompleted?: boolean;
   /** Whether the hold was dropped early. */
   holdDropped?: boolean;
+  /** Grace period start time for hold release detection (prevents false drops). */
+  holdReleaseGrace?: number;
 }
 
 // ── Hit judgment ─────────────────────────────────────────────────────────────

@@ -480,32 +480,10 @@ export class GameEngine extends EventEmitter<GameEventMap> {
             });
             this.emit(GameEvent.SCORE_UPDATE, { score: this.scoreEngine.getState() });
           }
-        } else {
-          // Hit outside timing window - count as miss
-          const hadCombo = this.scoreEngine.getState().combo > 0;
-          this.scoreEngine.registerMiss();
-
-          this.triggerMissDip();
-          if (hadCombo) {
-            this.emit(GameEvent.COMBO_BREAK, {
-              finalCombo: this.scoreEngine.getState().maxCombo,
-            });
-          }
-          this.emit(GameEvent.SCORE_UPDATE, { score: this.scoreEngine.getState() });
         }
-      } else {
-        // Pressed key but no note nearby - count as miss (phantom press)
-        const hadCombo = this.scoreEngine.getState().combo > 0;
-        this.scoreEngine.registerMiss();
-
-        this.triggerMissDip();
-        if (hadCombo) {
-          this.emit(GameEvent.COMBO_BREAK, {
-            finalCombo: this.scoreEngine.getState().maxCombo,
-          });
-        }
-        this.emit(GameEvent.SCORE_UPDATE, { score: this.scoreEngine.getState() });
+        // If judgment is null (edge case), just ignore — don't penalize
       }
+      // No note nearby — just ignore the press (no penalty)
     }
   }
 
@@ -527,7 +505,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
       const requiredDuration = holdEnd - holdStart;
       const completionRatio = requiredDuration > 0 ? heldDuration / requiredDuration : 1;
 
-      if (completionRatio >= 0.75) {
+      if (completionRatio >= 0.5) {
         // Successfully completed hold — award full points
         note.holdCompleted = true;
         const judgment = note.judgment ?? HitJudgment.GOOD;
@@ -609,8 +587,19 @@ export class GameEngine extends EventEmitter<GameEventMap> {
       }
 
       // ── Hold note: check if player dropped it (lane released while held) ──
+      // Use a small grace period (50ms) to avoid false drops from input glitches
       if (note.isBeingHeld && !this.input.isLanePressed(note.lane)) {
-        this.processHoldRelease(note.lane, songTime);
+        if (!note.holdReleaseGrace) {
+          // Start grace period — don't drop immediately
+          note.holdReleaseGrace = songTime;
+        } else if (songTime - note.holdReleaseGrace > 0.05) {
+          // Grace period expired — actually process the release
+          note.holdReleaseGrace = undefined;
+          this.processHoldRelease(note.lane, songTime);
+        }
+      } else if (note.isBeingHeld) {
+        // Key is pressed again — reset grace timer
+        note.holdReleaseGrace = undefined;
       }
 
       // Miss detection – note has passed the hit zone beyond the window
