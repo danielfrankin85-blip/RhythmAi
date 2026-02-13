@@ -1101,6 +1101,14 @@
   gap: var(--space-md);
 }
 
+.game-over__actions .btn {
+  color: #000;
+}
+
+.mp-results__actions .btn {
+  color: #000;
+}
+
 /* ─── Rank Display ────────────────────────────────────────────────────────── */
 
 .rank-display {

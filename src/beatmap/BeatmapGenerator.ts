@@ -326,6 +326,15 @@ export class BeatmapGenerator {
     // ── 15. Final re-sort ──────────────────────────────────────────────────
     notes.sort((a, b) => a.time - b.time || a.lane - b.lane);
 
+    // ── 16. Fill large gaps with hold notes ────────────────────────────────
+    //    Some songs have long instrumental breaks / intros / outros with
+    //    no detected onsets. Insert long hold notes so players aren't
+    //    just staring at an empty highway for 5+ seconds.
+    notes = this.fillLargeGaps(notes, detection.duration, activeLanes, laneOffset, rng, profile);
+
+    // ── 17. Final re-sort ──────────────────────────────────────────────────
+    notes.sort((a, b) => a.time - b.time || a.lane - b.lane);
+
     onProgress?.(100); // Complete!
 
     return {
@@ -982,6 +991,112 @@ export class BeatmapGenerator {
 
       return true; // Keep
     });
+  }
+
+  // ── Fill large gaps with hold notes ──────────────────────────────────────
+
+  /**
+   * Scan the final note list for long empty stretches (gaps > 3 s).
+   * Fill them with long hold notes so players always have something to do.
+   * Uses a staggered lane pattern so multiple notes can cascade across the gap.
+   */
+  private fillLargeGaps(
+    notes: BeatmapNote[],
+    duration: number,
+    activeLanes: number,
+    laneOffset: number,
+    rng: () => number,
+    _profile: DifficultyProfile,
+  ): BeatmapNote[] {
+    if (notes.length === 0) return notes;
+
+    const MIN_GAP = 3.0;  // Only fill gaps longer than 3 seconds
+    const HOLD_MIN = 1.2; // Minimum hold note length
+    const HOLD_MAX = 4.0; // Maximum hold note length
+    const NOTE_SPACING = 0.4; // Space between start of consecutive fill notes
+    const EDGE_BUFFER = 0.3; // Buffer before gap end so note isn't cut off
+
+    // Collect gap windows: time ranges with no notes
+    const sorted = [...notes].sort((a, b) => a.time - b.time);
+    const gaps: Array<{ start: number; end: number }> = [];
+
+    // Check gap before first note
+    if (sorted[0].time > MIN_GAP + 1.0) {
+      gaps.push({ start: 1.0, end: sorted[0].time - EDGE_BUFFER });
+    }
+
+    // Check gaps between consecutive notes
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const noteEnd = sorted[i].holdDuration
+        ? sorted[i].time + sorted[i].holdDuration!
+        : sorted[i].time;
+      const nextStart = sorted[i + 1].time;
+      const gap = nextStart - noteEnd;
+      if (gap >= MIN_GAP) {
+        gaps.push({ start: noteEnd + EDGE_BUFFER, end: nextStart - EDGE_BUFFER });
+      }
+    }
+
+    // Check gap after last note
+    const lastNote = sorted[sorted.length - 1];
+    const lastEnd = lastNote.holdDuration
+      ? lastNote.time + lastNote.holdDuration!
+      : lastNote.time;
+    if (duration - lastEnd > MIN_GAP) {
+      gaps.push({ start: lastEnd + EDGE_BUFFER, end: duration - 1.0 });
+    }
+
+    if (gaps.length === 0) return notes;
+
+    const newNotes: BeatmapNote[] = [];
+
+    for (const gap of gaps) {
+      const gapLen = gap.end - gap.start;
+      if (gapLen < HOLD_MIN + 0.2) continue;
+
+      // Determine how many hold notes to place
+      // For short gaps (3-5s): 1-2 holds. For long gaps (5+s): cascade of holds.
+      let cursor = gap.start;
+      let laneIndex = Math.floor(rng() * activeLanes);
+
+      while (cursor + HOLD_MIN < gap.end) {
+        const remaining = gap.end - cursor;
+        // Hold duration: between HOLD_MIN and HOLD_MAX, but leave room for more notes
+        let holdLen = Math.min(
+          HOLD_MAX,
+          remaining - NOTE_SPACING,
+          HOLD_MIN + rng() * (Math.min(HOLD_MAX, remaining) - HOLD_MIN),
+        );
+        holdLen = Math.max(HOLD_MIN, holdLen);
+
+        // Don't extend past the gap
+        if (cursor + holdLen > gap.end - 0.1) {
+          holdLen = gap.end - cursor - 0.1;
+          if (holdLen < HOLD_MIN) break;
+        }
+
+        const lane = laneOffset + (laneIndex % activeLanes);
+
+        let holdType: HoldDuration;
+        if (holdLen <= 0.7) holdType = 'short';
+        else if (holdLen <= 1.5) holdType = 'medium';
+        else holdType = 'long';
+
+        newNotes.push({
+          time: cursor,
+          lane,
+          holdDuration: holdLen,
+          holdType,
+        });
+
+        // Move cursor past this hold + spacing
+        cursor += holdLen + NOTE_SPACING;
+        // Rotate lanes for visual variety
+        laneIndex += 1 + Math.floor(rng() * 2);
+      }
+    }
+
+    return [...notes, ...newNotes];
   }
 
   // ── Density scaling ──────────────────────────────────────────────────────
