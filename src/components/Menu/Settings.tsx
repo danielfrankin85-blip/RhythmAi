@@ -21,8 +21,6 @@ interface SettingsProps {
   onSfxVolumeChange: (volume: number) => void;
   perfectHitSound: PerfectHitSound;
   onPerfectHitSoundChange: (sound: PerfectHitSound) => void;
-  theme: 'light' | 'dark';
-  onThemeChange: (theme: 'light' | 'dark') => void;
   onClose: () => void;
 }
 
@@ -34,7 +32,7 @@ interface SettingsProps {
  * - 100 FPS: Balanced performance and precision (recommended)
  * - 144 FPS: Maximum precision for high-refresh displays
  */
-export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, perfectHitSound, onPerfectHitSoundChange, theme, onThemeChange, onClose }) => {
+export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, perfectHitSound, onPerfectHitSoundChange, onClose }) => {
   const [editingLane, setEditingLane] = useState<number | null>(null);
   
   const fpsOptions = [
@@ -120,30 +118,6 @@ export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange
           >
             Reset to Default (D F J K)
           </button>
-        </div>
-
-        <div className="settings__section">
-          <h3 className="settings__section-title">Appearance</h3>
-          <p className="settings__section-desc">
-            Choose between dark mode and light mode. Theme changes apply immediately.
-          </p>
-
-          <div className="settings__fps-options">
-            <button
-              className={`settings__fps-option ${theme === 'dark' ? 'active' : ''}`}
-              onClick={() => onThemeChange('dark')}
-            >
-              <div className="settings__fps-label">🌙 Dark Mode</div>
-              <div className="settings__fps-desc">Dark backgrounds, light text</div>
-            </button>
-            <button
-              className={`settings__fps-option ${theme === 'light' ? 'active' : ''}`}
-              onClick={() => onThemeChange('light')}
-            >
-              <div className="settings__fps-label">☀️ Light Mode</div>
-              <div className="settings__fps-desc">Light backgrounds, dark text</div>
-            </button>
-          </div>
         </div>
 
         <div className="settings__section">

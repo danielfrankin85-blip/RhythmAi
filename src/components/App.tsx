@@ -66,10 +66,6 @@ export function App() {
     }
     return 'bass';
   });
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('theme');
-    return (saved === 'light' || saved === 'dark') ? saved : 'dark';
-  });
   const [keyBindings, setKeyBindings] = useState<string[]>(() => {
     const saved = localStorage.getItem('keyBindings');
     return saved ? JSON.parse(saved) : ['d', 'f', 'j', 'k'];
@@ -132,11 +128,6 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('songRunHistory', JSON.stringify(songRunHistory));
   }, [songRunHistory]);
-
-  useEffect(() => {
-    localStorage.setItem('theme', theme);
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
 
   // ── Helper: attach event listeners to a game engine ────────────────────
   const attachListeners = useCallback((engine: GameEngine) => {
@@ -500,10 +491,6 @@ export function App() {
     gameEngineRef.current?.setPerfectHitSound(sound);
   }, []);
 
-  const handleThemeChange = useCallback((newTheme: 'light' | 'dark') => {
-    setTheme(newTheme);
-  }, []);
-
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
@@ -788,8 +775,6 @@ export function App() {
           onSfxVolumeChange={handleSfxVolumeChange}
           perfectHitSound={perfectHitSound}
           onPerfectHitSoundChange={handlePerfectHitSoundChange}
-          theme={theme}
-          onThemeChange={handleThemeChange}
           onClose={handleCloseSettings}
         />
       )}
