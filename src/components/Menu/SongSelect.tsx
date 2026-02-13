@@ -28,17 +28,7 @@ function extractYouTubeId(input: string): string | null {
 }
 
 /** Public Piped / Invidious instances we try in order (all have CORS support) */
-const PIPED_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://api.piped.yt',
-];
-
-const INVIDIOUS_INSTANCES = [
-  'https://invidious.fdn.fr',
-  'https://vid.puffyan.us',
-  'https://invidious.lunar.icu',
-];
+// Proxied through our own /api/youtube serverless route to avoid CORS issues
 
 interface YTStreamResult {
   title: string;
@@ -47,68 +37,40 @@ interface YTStreamResult {
 }
 
 async function fetchYouTubeAudio(videoId: string): Promise<YTStreamResult> {
-  // ── Try Piped first ────────────────────────────────────────────────────
-  for (const base of PIPED_INSTANCES) {
-    try {
-      const resp = await fetch(`${base}/streams/${videoId}`, { signal: AbortSignal.timeout(12000) });
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      // Pick the best audio-only stream
-      const audioStreams: { url: string; mimeType: string; bitrate: number }[] = data.audioStreams ?? [];
-      const best = audioStreams
-        .filter((s: { mimeType: string }) => s.mimeType?.startsWith('audio/'))
-        .sort((a: { bitrate: number }, b: { bitrate: number }) => b.bitrate - a.bitrate)[0];
-      if (best?.url) {
-        return { title: data.title ?? `YouTube – ${videoId}`, audioUrl: best.url, duration: data.duration ?? 0 };
-      }
-    } catch { /* instance down — try next */ }
+  // Call our own serverless proxy which fetches Piped/Invidious server-side
+  const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+    throw new Error(
+      body.error ||
+      'Could not extract audio from this YouTube video.\n\n' +
+      'All proxy servers are currently unavailable or the video is restricted.\n' +
+      'Try again in a moment, or paste a different link.'
+    );
   }
 
-  // ── Fallback to Invidious ──────────────────────────────────────────────
-  for (const base of INVIDIOUS_INSTANCES) {
-    try {
-      const resp = await fetch(`${base}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(12000) });
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      const audioStreams: { url: string; type: string; bitrate: string }[] = data.adaptiveFormats?.filter(
-        (f: { type: string }) => f.type?.startsWith('audio/')
-      ) ?? [];
-      const best = audioStreams.sort(
-        (a: { bitrate: string }, b: { bitrate: string }) => parseInt(b.bitrate) - parseInt(a.bitrate)
-      )[0];
-      if (best?.url) {
-        return { title: data.title ?? `YouTube – ${videoId}`, audioUrl: best.url, duration: data.lengthSeconds ?? 0 };
-      }
-    } catch { /* next */ }
-  }
-
-  throw new Error(
-    'Could not extract audio from this YouTube video.\n\n' +
-    'All proxy servers are currently unavailable or the video is restricted.\n' +
-    'Try again in a moment, or paste a different link.'
-  );
+  const data = await resp.json();
+  return {
+    title: data.title ?? `YouTube – ${videoId}`,
+    audioUrl: data.audioUrl,
+    duration: data.duration ?? 0,
+  };
 }
 
 async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
-  // Try direct fetch first
-  try {
-    const resp = await fetch(audioUrl, { signal: AbortSignal.timeout(60000) });
-    if (resp.ok) return await resp.blob();
-  } catch { /* CORS blocked — try proxy */ }
+  // Route through our own serverless proxy to avoid CORS on the audio stream
+  const resp = await fetch(`/api/youtube-download?url=${encodeURIComponent(audioUrl)}`, {
+    signal: AbortSignal.timeout(120000),
+  });
 
-  // CORS proxy fallback
-  const proxyPrefixes = [
-    'https://corsproxy.io/?',
-    'https://api.allorigins.win/raw?url=',
-  ];
-  for (const prefix of proxyPrefixes) {
-    try {
-      const resp = await fetch(prefix + encodeURIComponent(audioUrl), { signal: AbortSignal.timeout(60000) });
-      if (resp.ok) return await resp.blob();
-    } catch { /* try next */ }
+  if (!resp.ok) {
+    throw new Error('Failed to download the audio stream. The video may be geo-restricted or too large.');
   }
 
-  throw new Error('Failed to download the audio stream. The video may be geo-restricted or too large.');
+  return await resp.blob();
 }
 
 // ── IndexedDB helpers for persisting uploaded songs ──────────────────────────
