@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import ytdl from '@distube/ytdl-core';
 
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
@@ -23,6 +24,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const videoId = req.query.v as string | undefined;
   if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
     return res.status(400).json({ error: 'Missing or invalid video ID' });
+  }
+
+  // ── Try direct YouTube extraction first (most reliable) ───────────────
+  try {
+    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+    const audioFormats = ytdl
+      .filterFormats(info.formats, 'audioonly')
+      .filter((f) => !!f.url)
+      .sort((a, b) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
+
+    const best = audioFormats[0];
+    if (best?.url) {
+      return res.status(200).json({
+        title: info.videoDetails?.title ?? `YouTube – ${videoId}`,
+        audioUrl: best.url,
+        duration: Number(info.videoDetails?.lengthSeconds ?? 0),
+        source: 'youtube-direct',
+      });
+    }
+  } catch {
+    // Fall through to public proxy instances below
   }
 
   // ── Try Piped ──────────────────────────────────────────────────────────
@@ -73,6 +95,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   return res.status(502).json({
-    error: 'Could not extract audio. All proxy servers are unavailable or the video is restricted.',
+    error: 'Could not extract audio for this video. It may be region/age restricted or temporarily unavailable.',
   });
 }
