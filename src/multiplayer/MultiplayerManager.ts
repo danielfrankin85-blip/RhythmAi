@@ -135,32 +135,51 @@ export class MultiplayerManager {
     this.setState('creating');
 
     return new Promise<string>((resolve, reject) => {
+      let settled = false;
       const peerId = PEER_PREFIX + this.roomCode;
-      this.peer = new Peer(peerId);
+      this.peer = new Peer(peerId, { debug: 0 });
 
       this.peer.on('open', () => {
+        if (settled) return;
+        settled = true;
+        this.setupHostListeners();
         resolve(this.roomCode);
       });
 
       this.peer.on('error', (err) => {
+        if (settled) return;
         // If peer ID taken, regenerate
         if (err.type === 'unavailable-id') {
           this.roomCode = generateRoomCode();
           this.peer?.destroy();
-          this.peer = new Peer(PEER_PREFIX + this.roomCode);
-          this.peer.on('open', () => resolve(this.roomCode));
+          this.peer = new Peer(PEER_PREFIX + this.roomCode, { debug: 0 });
+          this.peer.on('open', () => {
+            if (settled) return;
+            settled = true;
+            this.setupHostListeners();
+            resolve(this.roomCode);
+          });
           this.peer.on('error', (e) => {
+            if (settled) return;
+            settled = true;
             this.emit({ kind: 'error', message: e.message });
             reject(e);
           });
-          this.setupHostListeners();
         } else {
+          settled = true;
           this.emit({ kind: 'error', message: err.message });
           reject(err);
         }
       });
 
-      this.setupHostListeners();
+      // Signaling server timeout
+      setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          this.emit({ kind: 'error', message: 'Could not reach the multiplayer server.' });
+          reject(new Error('Signaling server timeout'));
+        }
+      }, 15000);
     });
   }
 
@@ -173,9 +192,30 @@ export class MultiplayerManager {
         return;
       }
       this.conn = conn;
-      this.setupDataChannel();
-      this.emit({ kind: 'opponent-connected' });
-      this.setState('waiting-song');
+
+      // IMPORTANT: Wait for the data channel to be fully open before proceeding.
+      // PeerJS fires 'connection' on the host before the WebRTC channel is ready.
+      const onOpen = () => {
+        this.setupDataChannel();
+        this.emit({ kind: 'opponent-connected' });
+        this.setState('waiting-song');
+      };
+
+      if (conn.open) {
+        onOpen();
+      } else {
+        conn.on('open', onOpen);
+        // If the connection fails to open within 15 s, clean up
+        const openTimeout = setTimeout(() => {
+          if (!conn.open) {
+            conn.close();
+            this.conn = null;
+            this.emit({ kind: 'error', message: 'Guest connection failed to establish' });
+          }
+        }, 15000);
+        conn.on('open', () => clearTimeout(openTimeout));
+        conn.on('close', () => clearTimeout(openTimeout));
+      }
     });
   }
 
@@ -188,13 +228,17 @@ export class MultiplayerManager {
     this.setState('joining');
 
     return new Promise<void>((resolve, reject) => {
-      this.peer = new Peer();
+      let settled = false;
+
+      this.peer = new Peer({ debug: 0 });
 
       this.peer.on('open', () => {
         const hostId = PEER_PREFIX + this.roomCode;
-        this.conn = this.peer!.connect(hostId, { reliable: true });
+        this.conn = this.peer!.connect(hostId, { reliable: true, serialization: 'json' });
 
         this.conn.on('open', () => {
+          if (settled) return;
+          settled = true;
           this.setupDataChannel();
           this.emit({ kind: 'opponent-connected' });
           this.setState('waiting-song');
@@ -202,23 +246,47 @@ export class MultiplayerManager {
         });
 
         this.conn.on('error', (err) => {
+          if (settled) return;
+          settled = true;
           this.emit({ kind: 'error', message: `Failed to connect: ${err.message}` });
           reject(err);
         });
 
+        this.conn.on('close', () => {
+          if (!settled) {
+            settled = true;
+            this.emit({ kind: 'error', message: 'Connection closed before it could open. Check the room code.' });
+            reject(new Error('Connection closed early'));
+          }
+        });
+
         // Timeout if connection doesn't open
         setTimeout(() => {
-          if (!this.conn?.open) {
-            this.emit({ kind: 'error', message: 'Connection timed out. Check the room code.' });
+          if (!settled) {
+            settled = true;
+            this.conn?.close();
+            this.conn = null;
+            this.emit({ kind: 'error', message: 'Connection timed out. Check the room code and try again.' });
             reject(new Error('Connection timeout'));
           }
-        }, 10000);
+        }, 15000);
       });
 
       this.peer.on('error', (err) => {
+        if (settled) return;
+        settled = true;
         this.emit({ kind: 'error', message: err.message });
         reject(err);
       });
+
+      // Peer itself may fail to reach signaling server
+      setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          this.emit({ kind: 'error', message: 'Could not reach the multiplayer server. Check your internet connection.' });
+          reject(new Error('Signaling server timeout'));
+        }
+      }, 20000);
     });
   }
 

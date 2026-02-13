@@ -118,6 +118,8 @@ export function App() {
   const [mpOpponentFinalScore, setMpOpponentFinalScore] = useState<PlayerScore | null>(null);
   const mpSongFileRef = useRef<File | null>(null);
   const mpDifficultyRef = useRef<Difficulty>('medium');
+  const appStateRef = useRef<AppState>(appState);
+  const handleStartGameRef = useRef<((file: File, difficulty: Difficulty, songId: string, songName: string) => void) | null>(null);
 
   useEffect(() => {
     localStorage.setItem('songBestRecords', JSON.stringify(songBestRecords));
@@ -501,6 +503,10 @@ export function App() {
     return mpManagerRef.current;
   }, []);
 
+  // Keep refs fresh so the multiplayer event handler never has stale closures
+  useEffect(() => { appStateRef.current = appState; }, [appState]);
+  useEffect(() => { handleStartGameRef.current = handleStartGame; }, [handleStartGame]);
+
   const setupMpListeners = useCallback((mgr: MultiplayerManager) => {
     return mgr.on((event) => {
       switch (event.kind) {
@@ -513,7 +519,7 @@ export function App() {
           break;
         case 'opponent-disconnected':
           setMpOpponentConnected(false);
-          if (appState !== 'playing' && appState !== 'game-over') {
+          if (appStateRef.current !== 'playing' && appStateRef.current !== 'game-over') {
             setMpError('Opponent disconnected');
           }
           break;
@@ -527,10 +533,10 @@ export function App() {
         case 'start-game': {
           // Guest receives this — start playing
           const file = mpSongFileRef.current;
-          if (file) {
+          if (file && handleStartGameRef.current) {
             const songId = `mp-${file.name}-${file.size}`;
             const songName = file.name.replace(/\.[^/.]+$/, '');
-            handleStartGame(file, mpDifficultyRef.current, songId, songName);
+            handleStartGameRef.current(file, mpDifficultyRef.current, songId, songName);
           }
           break;
         }
@@ -546,7 +552,7 @@ export function App() {
           break;
       }
     });
-  }, [appState, handleStartGame]);
+  }, []);  // stable — uses refs, no stale closures
 
   const handleOpenMultiplayer = useCallback(() => {
     setMpError(null);
@@ -571,8 +577,9 @@ export function App() {
       setMpConnecting(false);
       setMpActive(true);
       setAppState('mp-waiting');
-    } catch {
+    } catch (e) {
       setMpConnecting(false);
+      // Error message already set via event handler
       void unsub;
     }
   }, [getMpManager, setupMpListeners]);
@@ -589,8 +596,9 @@ export function App() {
       setMpConnecting(false);
       setMpActive(true);
       setAppState('mp-waiting');
-    } catch {
+    } catch (e) {
       setMpConnecting(false);
+      // Error message already set via event handler
       void unsub;
     }
   }, [getMpManager, setupMpListeners]);
