@@ -142,7 +142,8 @@ export class MultiplayerManager {
     return new Promise<string>((resolve, reject) => {
       let settled = false;
       const peerId = PEER_PREFIX + this.roomCode;
-      this.peer = new Peer(peerId, { debug: 0 });
+      console.log('[MP] createRoom: Creating peer with ID:', peerId);
+      this.peer = new Peer(peerId, { debug: 2 });
 
       this.peer.on('open', () => {
         console.log('[MP] createRoom: Peer opened with ID:', peerId);
@@ -154,12 +155,16 @@ export class MultiplayerManager {
       });
 
       this.peer.on('error', (err) => {
+        console.error('[MP] createRoom: Peer error:', err.type, '-', err.message);
         if (settled) return;
         // If peer ID taken, regenerate
         if (err.type === 'unavailable-id') {
+          console.log('[MP] createRoom: Peer ID unavailable, regenerating...');
           this.roomCode = generateRoomCode();
           this.peer?.destroy();
-          this.peer = new Peer(PEER_PREFIX + this.roomCode, { debug: 0 });
+          const newPeerId = PEER_PREFIX + this.roomCode;
+          console.log('[MP] createRoom: Retrying with new peer ID:', newPeerId);
+          this.peer = new Peer(newPeerId, { debug: 2 });
           this.peer.on('open', () => {
             if (settled) return;
             settled = true;
@@ -167,6 +172,7 @@ export class MultiplayerManager {
             resolve(this.roomCode);
           });
           this.peer.on('error', (e) => {
+            console.error('[MP] createRoom: Retry peer error:', e.type, '-', e.message);
             if (settled) return;
             settled = true;
             this.emit({ kind: 'error', message: e.message });
@@ -177,6 +183,14 @@ export class MultiplayerManager {
           this.emit({ kind: 'error', message: err.message });
           reject(err);
         }
+      });
+
+      this.peer.on('disconnected', () => {
+        console.warn('[MP] createRoom: Host peer disconnected from signaling server');
+      });
+
+      this.peer.on('close', () => {
+        console.warn('[MP] createRoom: Host peer closed');
       });
 
       // Signaling server timeout
@@ -191,8 +205,13 @@ export class MultiplayerManager {
   }
 
   private setupHostListeners(): void {
-    if (!this.peer) return;
-    console.log('[MP] setupHostListeners: Listening for guest connections');
+    if (!this.peer) {
+      console.error('[MP] setupHostListeners: No peer exists!');
+      return;
+    }
+    console.log('[MP] setupHostListeners: Listening for guest connections on peer ID:', this.peer.id);
+    console.log('[MP] setupHostListeners: Peer connection status - disconnected:', this.peer.disconnected, 'destroyed:', this.peer.destroyed);
+    
     this.peer.on('connection', (conn) => {
       console.log('[MP] setupHostListeners: Guest connection received from:', conn.peer);
       // Accept only one guest
@@ -274,13 +293,20 @@ export class MultiplayerManager {
         reject(err);
       };
 
-      this.peer = new Peer({ debug: 0 });
+      this.peer = new Peer({ debug: 2 });
 
       this.peer.on('open', () => {
         console.log('[MP] joinRoom: Guest peer opened with ID:', this.peer!.id);
+        console.log('[MP] joinRoom: Peer status - disconnected:', this.peer!.disconnected, 'destroyed:', this.peer!.destroyed);
         const hostId = PEER_PREFIX + this.roomCode;
         console.log('[MP] joinRoom: Attempting to connect to host ID:', hostId);
         this.conn = this.peer!.connect(hostId, { reliable: true, serialization: 'json' });
+        console.log('[MP] joinRoom: Connection object created, initial state:', {
+          open: this.conn.open,
+          peer: this.conn.peer,
+          type: this.conn.type,
+          metadata: this.conn.metadata
+        });
 
         this.conn.on('open', () => {
           console.log('[MP] joinRoom: Connection channel opened, waiting for ping from host');
@@ -316,13 +342,26 @@ export class MultiplayerManager {
           }
         });
 
+        // Check connection state periodically
+        const stateCheckInterval = setInterval(() => {
+          if (this.conn) {
+            console.log('[MP] joinRoom: Connection state check - open:', this.conn.open, 'peer:', this.conn.peer);
+          }
+        }, 2000);
+
         // Timeout if connection doesn't open at all
         setTimeout(() => {
+          clearInterval(stateCheckInterval);
           if (this.joinRoomReject) {
             console.error('[MP] joinRoom: Overall connection timeout (15s) - connection never opened');
+            console.error('[MP] joinRoom: Final connection state:', this.conn ? {
+              open: this.conn.open,
+              peer: this.conn.peer,
+              type: this.conn.type
+            } : 'null');
             this.conn?.close();
             this.conn = null;
-            this.emit({ kind: 'error', message: 'Connection timed out. Check the room code and try again.' });
+            this.emit({ kind: 'error', message: 'Connection timed out. The host may be offline or the room code is invalid.' });
             this.joinRoomReject(new Error('Connection timeout'));
           }
         }, 15000);
@@ -334,6 +373,14 @@ export class MultiplayerManager {
         settled = true;
         this.emit({ kind: 'error', message: err.message });
         reject(err);
+      });
+
+      this.peer.on('disconnected', () => {
+        console.warn('[MP] joinRoom: Peer disconnected from signaling server');
+      });
+
+      this.peer.on('close', () => {
+        console.warn('[MP] joinRoom: Peer closed');
       });
 
       // Peer itself may fail to reach signaling server
