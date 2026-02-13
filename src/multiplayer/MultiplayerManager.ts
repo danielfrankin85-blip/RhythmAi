@@ -132,9 +132,11 @@ export class MultiplayerManager {
   // ── Create Game (host) ─────────────────────────────────────────────────
 
   async createRoom(): Promise<string> {
+    console.log('[MP] createRoom: Starting room creation');
     this.cleanup();
     this.role = 'host';
     this.roomCode = generateRoomCode();
+    console.log('[MP] createRoom: Room code generated:', this.roomCode);
     this.setState('creating');
 
     return new Promise<string>((resolve, reject) => {
@@ -143,9 +145,11 @@ export class MultiplayerManager {
       this.peer = new Peer(peerId, { debug: 0 });
 
       this.peer.on('open', () => {
+        console.log('[MP] createRoom: Peer opened with ID:', peerId);
         if (settled) return;
         settled = true;
         this.setupHostListeners();
+        console.log('[MP] createRoom: Host listeners set up, resolving with code:', this.roomCode);
         resolve(this.roomCode);
       });
 
@@ -188,9 +192,12 @@ export class MultiplayerManager {
 
   private setupHostListeners(): void {
     if (!this.peer) return;
+    console.log('[MP] setupHostListeners: Listening for guest connections');
     this.peer.on('connection', (conn) => {
+      console.log('[MP] setupHostListeners: Guest connection received from:', conn.peer);
       // Accept only one guest
       if (this.conn) {
+        console.log('[MP] setupHostListeners: Rejecting additional connection (already have guest)');
         conn.close();
         return;
       }
@@ -208,10 +215,12 @@ export class MultiplayerManager {
       }, 15000);
 
       const onOpen = () => {
+        console.log('[MP] setupHostListeners: Connection channel opened');
         if (openHandled) return;
         openHandled = true;
         clearTimeout(openTimeout);
         this.setupDataChannel();
+        console.log('[MP] setupHostListeners: Data channel set up, sending ping to guest');
         // Don't emit opponent-connected yet! Wait for guest to confirm via handshake.
         // Send a ready ping - when guest responds, THEN we're connected.
         this.send({ type: 'ping' });
@@ -230,9 +239,11 @@ export class MultiplayerManager {
   // ── Join Game (guest) ──────────────────────────────────────────────────
 
   async joinRoom(code: string): Promise<void> {
+    console.log('[MP] joinRoom: Starting join with code:', code);
     this.cleanup();
     this.role = 'guest';
     this.roomCode = code.toUpperCase().trim();
+    console.log('[MP] joinRoom: Normalized code:', this.roomCode);
     this.setState('joining');
 
     return new Promise<void>((resolve, reject) => {
@@ -266,17 +277,22 @@ export class MultiplayerManager {
       this.peer = new Peer({ debug: 0 });
 
       this.peer.on('open', () => {
+        console.log('[MP] joinRoom: Guest peer opened with ID:', this.peer!.id);
         const hostId = PEER_PREFIX + this.roomCode;
+        console.log('[MP] joinRoom: Attempting to connect to host ID:', hostId);
         this.conn = this.peer!.connect(hostId, { reliable: true, serialization: 'json' });
 
         this.conn.on('open', () => {
+          console.log('[MP] joinRoom: Connection channel opened, waiting for ping from host');
           if (settled) return;
           // Channel is open - set up data handlers but DON'T resolve yet
           // Wait for ping from host to confirm bidirectional handshake
           this.setupDataChannel();
+          console.log('[MP] joinRoom: Data channel set up, starting 10s handshake timeout');
           
           // Start timeout waiting for ping
           this.joinRoomTimeout = setTimeout(() => {
+            console.error('[MP] joinRoom: Handshake timeout - no ping received from host');
             if (this.joinRoomReject) {
               this.emit({ kind: 'error', message: 'Handshake timeout. Host did not respond.' });
               this.joinRoomReject(new Error('Handshake timeout'));
@@ -285,6 +301,7 @@ export class MultiplayerManager {
         });
 
         this.conn.on('error', (err) => {
+          console.error('[MP] joinRoom: Connection error:', err);
           if (this.joinRoomReject) {
             this.emit({ kind: 'error', message: `Failed to connect: ${err.message}` });
             this.joinRoomReject(err);
@@ -292,6 +309,7 @@ export class MultiplayerManager {
         });
 
         this.conn.on('close', () => {
+          console.error('[MP] joinRoom: Connection closed before handshake completed');
           if (this.joinRoomReject) {
             this.emit({ kind: 'error', message: 'Connection closed before it could open. Check the room code.' });
             this.joinRoomReject(new Error('Connection closed early'));
@@ -301,6 +319,7 @@ export class MultiplayerManager {
         // Timeout if connection doesn't open at all
         setTimeout(() => {
           if (this.joinRoomReject) {
+            console.error('[MP] joinRoom: Overall connection timeout (15s) - connection never opened');
             this.conn?.close();
             this.conn = null;
             this.emit({ kind: 'error', message: 'Connection timed out. Check the room code and try again.' });
@@ -310,6 +329,7 @@ export class MultiplayerManager {
       });
 
       this.peer.on('error', (err) => {
+        console.error('[MP] joinRoom: Peer error:', err.type, err.message);
         if (settled) return;
         settled = true;
         this.emit({ kind: 'error', message: err.message });
@@ -331,13 +351,16 @@ export class MultiplayerManager {
 
   private setupDataChannel(): void {
     if (!this.conn) return;
+    console.log('[MP] setupDataChannel: Setting up data channel handlers (role:', this.role + ')');
 
     this.conn.on('data', (raw) => {
       const msg = raw as Message;
+      console.log('[MP] setupDataChannel: Received data message:', msg.type);
       this.handleMessage(msg);
     });
 
     this.conn.on('close', () => {
+      console.log('[MP] setupDataChannel: Connection closed');
       this.emit({ kind: 'opponent-disconnected' });
       if (this.lobbyState !== 'finished') {
         this.setState('idle');
@@ -345,6 +368,7 @@ export class MultiplayerManager {
     });
 
     this.conn.on('error', (err) => {
+      console.error('[MP] setupDataChannel: Connection error:', err);
       this.emit({ kind: 'error', message: `Connection error: ${err.message}` });
     });
   }
@@ -381,10 +405,12 @@ export class MultiplayerManager {
         break;
 
       case 'ping':
+        console.log('[MP] handleMessage: Received ping (role:', this.role, 'state:', this.lobbyState + ')');
         // Guest receives this immediately after host's channel opens.
         // Respond with pong AND confirm we're connected.
         this.send({ type: 'pong' });
         if (this.role === 'guest' && this.lobbyState === 'joining') {
+          console.log('[MP] handleMessage: Guest completing handshake, resolving joinRoom promise');
           // Complete the joinRoom handshake
           if (this.joinRoomResolve) {
             this.joinRoomResolve();
@@ -394,9 +420,11 @@ export class MultiplayerManager {
         }
         break;
       case 'pong':
+        console.log('[MP] handleMessage: Received pong (role:', this.role, 'state:', this.lobbyState + ')');
         // Host receives this after guest confirms bidirectional channel.
         // NOW we know both sides can communicate.
         if (this.role === 'host' && this.lobbyState === 'creating') {
+          console.log('[MP] handleMessage: Host received pong, connection confirmed');
           this.emit({ kind: 'opponent-connected' });
           this.setState('waiting-song');
         }
@@ -406,7 +434,10 @@ export class MultiplayerManager {
 
   private send(msg: Message): void {
     if (this.conn?.open) {
+      console.log('[MP] send: Sending message:', msg.type, '(role:', this.role + ')');
       this.conn.send(msg);
+    } else {
+      console.error('[MP] send: Cannot send, connection not open. Message:', msg.type);
     }
   }
 
