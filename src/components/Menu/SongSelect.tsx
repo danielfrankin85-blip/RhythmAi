@@ -13,8 +13,36 @@ interface YTStreamResult {
   duration: number; // seconds
 }
 
-async function fetchYouTubeAudio(videoId: string): Promise<YTStreamResult> {
-  // Call our own serverless proxy which fetches Piped/Invidious server-side
+async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
+  // If user has API key, use official YouTube Data API (more reliable)
+  if (apiKey && apiKey.trim()) {
+    const resp = await fetch(
+      `/api/youtube-auth?v=${encodeURIComponent(videoId)}&apiKey=${encodeURIComponent(apiKey)}`,
+      { signal: AbortSignal.timeout(30000) }
+    );
+
+    const contentType = resp.headers.get('content-type') ?? '';
+    const isJson = contentType.includes('application/json');
+    const data = isJson ? await resp.json().catch(() => null) : null;
+
+    if (!resp.ok) {
+      const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
+      const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
+      throw new Error(body.error || 'YouTube API authentication failed');
+    }
+
+    if (!data || typeof data !== 'object' || !('audioUrl' in data)) {
+      throw new Error('YouTube API returned an invalid response');
+    }
+
+    return {
+      title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
+      audioUrl: (data as { audioUrl: string }).audioUrl,
+      duration: (data as { duration?: number }).duration ?? 0,
+    };
+  }
+
+  // Fall back to proxy servers (Piped/Invidious/cobalt)
   const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
     signal: AbortSignal.timeout(30000),
   });
@@ -207,6 +235,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [ytError, setYtError] = useState<string | null>(null);
   const [ytTitle, setYtTitle] = useState<string | null>(null);
   const [ytActiveId, setYtActiveId] = useState<string | null>(null);
+  const [ytApiKey, setYtApiKey] = useState<string>(() => localStorage.getItem('ytApiKey') ?? '');
 
   // Load persisted custom songs from IndexedDB on mount
   useEffect(() => {
@@ -214,6 +243,15 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       .then((songs) => setCustomSongs(songs.sort((a, b) => b.addedAt - a.addedAt)))
       .catch((err) => console.warn('Could not load stored songs:', err));
   }, []);
+
+  // Save YouTube API key to localStorage when it changes
+  useEffect(() => {
+    if (ytApiKey) {
+      localStorage.setItem('ytApiKey', ytApiKey);
+    } else {
+      localStorage.removeItem('ytApiKey');
+    }
+  }, [ytApiKey]);
 
   // ── Add files (from input or drop) ────────────────────────────────────
   const addFiles = useCallback(async (files: FileList | File[]) => {
@@ -316,8 +354,8 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       setYtError(null);
       setYtTitle(title);
 
-      // Step 1: Resolve stream URL
-      const result = await fetchYouTubeAudio(videoId);
+      // Step 1: Resolve stream URL (use API key if available)
+      const result = await fetchYouTubeAudio(videoId, ytApiKey);
       setYtTitle(result.title);
       setYtStatus('downloading');
 
@@ -346,7 +384,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       setYtStatus('error');
       setYtActiveId(null);
     }
-  }, []);
+  }, [ytApiKey]);
 
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -471,6 +509,36 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
               <div className="yt-section__subtitle">
                 Search for any song — click a result to download, analyze, and play
               </div>
+            </div>
+          </div>
+
+          {/* API Key Settings */}
+          <div className="yt-section__api-key">
+            <div className="yt-section__api-key-header">
+              <span>⚙️ YouTube API Key (optional but recommended)</span>
+              <a
+                href="https://console.cloud.google.com/apis/credentials"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="yt-section__api-key-link"
+              >
+                Get free API key →
+              </a>
+            </div>
+            <input
+              type="password"
+              className="yt-section__api-key-input"
+              placeholder="Paste your YouTube Data API v3 key here..."
+              value={ytApiKey}
+              onChange={(e) => { setYtApiKey(e.target.value); setYtError(null); }}
+              disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
+            />
+            <div className="yt-section__api-key-info">
+              {ytApiKey ? (
+                <span style={{ color: '#4ade80' }}>✓ Using official YouTube API (more reliable)</span>
+              ) : (
+                <span style={{ color: '#fbbf24' }}>⚠ Using proxy servers (may fail for some videos)</span>
+              )}
             </div>
           </div>
 
