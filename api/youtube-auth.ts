@@ -165,13 +165,13 @@ function parseDuration(iso8601: string): number {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const videoId = req.query.v as string | undefined;
-  const apiKey = req.query.apiKey as string | undefined;
+  const videoId = (req.method === 'POST' ? req.body?.v : req.query.v) as string | undefined;
+  const apiKey = (req.method === 'POST' ? req.body?.apiKey : req.query.apiKey) as string | undefined;
 
   if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
     return res.status(400).json({ error: 'Missing or invalid video ID' });

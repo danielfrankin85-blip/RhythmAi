@@ -14,12 +14,10 @@ interface YTStreamResult {
 }
 
 async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
-  // If user has API key, use official YouTube Data API (more reliable)
-  if (apiKey && apiKey.trim()) {
-    const resp = await fetch(
-      `/api/youtube-auth?v=${encodeURIComponent(videoId)}&apiKey=${encodeURIComponent(apiKey)}`,
-      { signal: AbortSignal.timeout(30000) }
-    );
+  const fetchFromProxy = async (): Promise<YTStreamResult> => {
+    const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
+      signal: AbortSignal.timeout(30000),
+    });
 
     const contentType = resp.headers.get('content-type') ?? '';
     const isJson = contentType.includes('application/json');
@@ -28,11 +26,18 @@ async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTSt
     if (!resp.ok) {
       const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
       const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-      throw new Error(body.error || 'YouTube API authentication failed');
+      throw new Error(
+        body.error ||
+          'Could not extract audio from this YouTube video.\n\n' +
+            'All proxy servers are currently unavailable or the video is restricted.\n' +
+            'Try again in a moment, or paste a different link.'
+      );
     }
 
     if (!data || typeof data !== 'object' || !('audioUrl' in data)) {
-      throw new Error('YouTube API returned an invalid response');
+      throw new Error(
+        'YouTube API returned an invalid response in local dev. Restart `npm run dev` so /api proxy is applied, then try again.'
+      );
     }
 
     return {
@@ -40,39 +45,42 @@ async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTSt
       audioUrl: (data as { audioUrl: string }).audioUrl,
       duration: (data as { duration?: number }).duration ?? 0,
     };
+  };
+
+  // If user has API key, use official YouTube Data API (more reliable)
+  if (apiKey && apiKey.trim()) {
+    try {
+      const resp = await fetch('/api/youtube-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ v: videoId, apiKey }),
+        signal: AbortSignal.timeout(30000),
+      });
+
+      const contentType = resp.headers.get('content-type') ?? '';
+      const isJson = contentType.includes('application/json');
+      const data = isJson ? await resp.json().catch(() => null) : null;
+
+      if (resp.ok && data && typeof data === 'object' && 'audioUrl' in data) {
+        return {
+          title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
+          audioUrl: (data as { audioUrl: string }).audioUrl,
+          duration: (data as { duration?: number }).duration ?? 0,
+        };
+      }
+
+      const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
+      const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
+      console.warn('[YouTube] API-key extraction failed; falling back to proxy:', body.error || resp.status);
+      return await fetchFromProxy();
+    } catch (err) {
+      console.warn('[YouTube] API-key extraction network error; falling back to proxy:', (err as Error).message);
+      return await fetchFromProxy();
+    }
   }
 
   // Fall back to proxy servers (Piped/Invidious/cobalt)
-  const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
-    signal: AbortSignal.timeout(30000),
-  });
-
-  const contentType = resp.headers.get('content-type') ?? '';
-  const isJson = contentType.includes('application/json');
-  const data = isJson ? await resp.json().catch(() => null) : null;
-
-  if (!resp.ok) {
-    const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
-    const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-    throw new Error(
-      body.error ||
-      'Could not extract audio from this YouTube video.\n\n' +
-      'All proxy servers are currently unavailable or the video is restricted.\n' +
-      'Try again in a moment, or paste a different link.'
-    );
-  }
-
-  if (!data || typeof data !== 'object' || !('audioUrl' in data)) {
-    throw new Error(
-      'YouTube API returned an invalid response in local dev. Restart `npm run dev` so /api proxy is applied, then try again.'
-    );
-  }
-
-  return {
-    title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
-    audioUrl: (data as { audioUrl: string }).audioUrl,
-    duration: (data as { duration?: number }).duration ?? 0,
-  };
+  return await fetchFromProxy();
 }
 
 async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
