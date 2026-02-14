@@ -721,6 +721,7 @@ export function App() {
         <div className="menu">
           <div className="menu__header">
             <h1 className="menu__title">Rhythm Ai</h1>
+            <p className="menu__subtitle">A fast-paced rhythm game where you hit notes in time with your music.</p>
             <p className="menu__subtitle">PC only for now</p>
           </div>
           <div className="menu__content">
