@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import ytdl from '@distube/ytdl-core';
 
 export const config = {
   maxDuration: 60,
@@ -24,6 +25,31 @@ const INVIDIOUS_INSTANCES = [
 
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
+}
+
+async function tryDirectYtdlExtraction(videoId: string): Promise<{ title: string; audioUrl: string; duration: number } | null> {
+  try {
+    const info = await Promise.race([
+      ytdl.getInfo(videoId),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('ytdl timeout')), 15000)),
+    ]);
+
+    const selected = ytdl.chooseFormat(info.formats, {
+      filter: 'audioonly',
+      quality: 'highestaudio',
+    });
+
+    if (!selected?.url) return null;
+
+    return {
+      title: info.videoDetails?.title ?? `YouTube – ${videoId}`,
+      audioUrl: selected.url,
+      duration: Number(info.videoDetails?.lengthSeconds ?? 0),
+    };
+  } catch (err) {
+    console.log(`[YouTube API] Direct ytdl failed: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 async function getDynamicPipedInstances(): Promise<string[]> {
@@ -72,6 +98,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   console.log(`[YouTube API] Extracting audio for: ${videoId}`);
+
+  // ── Try direct extraction first (no public proxy dependency) ───────────
+  console.log('[YouTube API] Trying direct extraction...');
+  const direct = await tryDirectYtdlExtraction(videoId);
+  if (direct) {
+    console.log('[YouTube API] ✓ Success via direct ytdl extraction');
+    return res.status(200).json({
+      title: direct.title,
+      audioUrl: direct.audioUrl,
+      duration: direct.duration,
+      source: 'ytdl',
+    });
+  }
 
   // ── Try Piped instances ───────────────────────────────────────────────
   console.log('[YouTube API] Trying Piped...');
