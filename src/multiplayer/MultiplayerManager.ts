@@ -307,11 +307,18 @@ export class MultiplayerManager {
     
     this.peer.on('connection', (conn) => {
       console.log('[MP] setupHostListeners: Guest connection received from:', conn.peer);
-      // Accept only one guest
+      // Accept only one active guest.
+      // If we have a stale pending connection that never opened, replace it.
       if (this.conn) {
-        console.log('[MP] setupHostListeners: Rejecting additional connection (already have guest)');
-        conn.close();
-        return;
+        if (this.conn.open) {
+          console.log('[MP] setupHostListeners: Rejecting additional connection (already have active guest)');
+          conn.close();
+          return;
+        }
+
+        console.warn('[MP] setupHostListeners: Replacing stale pending guest connection');
+        try { this.conn.close(); } catch { /* ignore */ }
+        this.conn = null;
       }
       this.conn = conn;
 
@@ -323,11 +330,14 @@ export class MultiplayerManager {
       let openHandled = false;
       const openTimeout = setTimeout(() => {
         if (!openHandled && !conn.open) {
+          console.warn('[MP] setupHostListeners: Guest connection open timeout; clearing pending slot');
           conn.close();
-          this.conn = null;
+          if (this.conn === conn) {
+            this.conn = null;
+          }
           this.emit({ kind: 'error', message: 'Guest connection failed to establish' });
         }
-      }, 15000);
+      }, 10000);
 
       const onOpen = () => {
         console.log('[MP] setupHostListeners: Connection channel opened');
@@ -342,7 +352,20 @@ export class MultiplayerManager {
       };
 
       conn.on('open', onOpen);
-      conn.on('close', () => clearTimeout(openTimeout));
+      conn.on('close', () => {
+        clearTimeout(openTimeout);
+        if (!openHandled && this.conn === conn) {
+          console.warn('[MP] setupHostListeners: Pending guest connection closed before open');
+          this.conn = null;
+        }
+      });
+      conn.on('error', (err) => {
+        clearTimeout(openTimeout);
+        if (!openHandled && this.conn === conn) {
+          console.warn('[MP] setupHostListeners: Pending guest connection error before open:', err.message);
+          this.conn = null;
+        }
+      });
 
       // If already open (rare but possible), call onOpen
       if (conn.open && !openHandled) {
