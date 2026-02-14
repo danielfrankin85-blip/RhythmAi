@@ -961,8 +961,8 @@
 }
 
 .scoreboard__item--accuracy {
-  font-size: var(--font-size-lg);
-  color: var(--color-text-secondary);
+  font-size: 2rem;
+  color: white;
 }
 
 /* ─── Combo Display ───────────────────────────────────────────────────────── */
@@ -1059,13 +1059,13 @@
   font-weight: var(--font-weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--color-text-primary);
+  color: white;
   margin-bottom: var(--space-sm);
 }
 
 .map-leaderboard__empty {
   font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  color: white;
   opacity: 0.7;
 }
 
