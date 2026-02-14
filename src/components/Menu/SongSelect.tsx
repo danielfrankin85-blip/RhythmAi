@@ -503,7 +503,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
           className={`song-tabs__tab ${tab === 'youtube' ? 'song-tabs__tab--active' : ''}`}
           onClick={() => setTab('youtube')}
         >
-          ▶ YouTube
+          ▶ YouTube (Under Maintenance)
         </button>
       </div>
 

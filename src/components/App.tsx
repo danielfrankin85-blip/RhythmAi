@@ -720,8 +720,8 @@ export function App() {
       {appState === 'menu' && (
         <div className="menu">
           <div className="menu__header">
-            <h1 className="menu__title">Rhythm Game</h1>
-            <p className="menu__subtitle">Play your music, test your skills</p>
+            <h1 className="menu__title">Rhythm Ai</h1>
+            <p className="menu__subtitle">PC only for now</p>
           </div>
           <div className="menu__content">
             <SongSelect onStartGame={handleStartGame} isLoading={isLoadingBeatmap} bestRecords={songBestRecords} />
