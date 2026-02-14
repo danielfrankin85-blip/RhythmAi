@@ -74,37 +74,99 @@ type EventHandler = (event: MultiplayerEvent) => void;
 
 const PEER_PREFIX = 'rhythmai-mp-';
 
-// ICE server configuration with STUN + TURN for NAT/firewall traversal
-// Uses Open Relay Project free TURN servers (https://www.metered.ca/tools/openrelay)
-const ICE_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turns:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-  ],
-};
+// Multiple ICE configurations for fallback:
+// Config 0 – STUN + TURN (normal mode)
+// Config 1 – alternate STUN/TURN servers
+// Config 2 – relay-only mode (force TURN, bypasses NAT completely)
+const ICE_CONFIGS: RTCConfiguration[] = [
+  // Config 0: Standard STUN + TURN
+  {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+    ],
+  },
+  // Config 1: Alternate servers (broader STUN coverage + repeat TURN for second attempt)
+  {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.services.mozilla.com' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+    ],
+  },
+  // Config 2: RELAY ONLY – force all traffic through TURN (bypasses symmetric NAT)
+  {
+    iceServers: [
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+    ],
+    iceTransportPolicy: 'relay', // Force TURN relay – never attempt direct
+  },
+];
+
+// Host always uses config 0
+const HOST_ICE_CONFIG = ICE_CONFIGS[0];
 
 /** Log ICE connection state changes on the underlying RTCPeerConnection */
 function monitorICE(conn: DataConnection, label: string): void {
@@ -172,9 +234,10 @@ export class MultiplayerManager {
   private hasFinished = false;
   private opponentFinished = false;
   private joinRoomResolve: (() => void) | null = null;
-  private joinRoomReject: ((error: Error) => void) | null = null;
   private joinRoomTimeout: ReturnType<typeof setTimeout> | null = null;
   private signalingReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Cancellation token: incremented to abort stale join attempts */
+  private joinGeneration = 0;
 
   // ── Public getters ─────────────────────────────────────────────────────
 
@@ -218,7 +281,7 @@ export class MultiplayerManager {
       let settled = false;
       const peerId = PEER_PREFIX + this.roomCode;
       console.log('[MP] createRoom: Creating peer with ID:', peerId);
-      this.peer = new Peer(peerId, { debug: 2, config: ICE_CONFIG });
+      this.peer = new Peer(peerId, { debug: 2, config: HOST_ICE_CONFIG });
 
       this.peer.on('open', () => {
         console.log('[MP] createRoom: Peer opened with ID:', peerId);
@@ -239,7 +302,7 @@ export class MultiplayerManager {
           this.peer?.destroy();
           const newPeerId = PEER_PREFIX + this.roomCode;
           console.log('[MP] createRoom: Retrying with new peer ID:', newPeerId);
-          this.peer = new Peer(newPeerId, { debug: 2, config: ICE_CONFIG });
+          this.peer = new Peer(newPeerId, { debug: 2, config: HOST_ICE_CONFIG });
           this.peer.on('open', () => {
             if (settled) return;
             settled = true;
@@ -307,17 +370,19 @@ export class MultiplayerManager {
     
     this.peer.on('connection', (conn) => {
       console.log('[MP] setupHostListeners: Guest connection received from:', conn.peer);
-      // While still in 'creating', allow replacing pending connections.
-      // Only hard-lock additional guests after handshake completion changes state.
-      if (this.conn) {
-        const handshakeComplete = this.lobbyState !== 'creating';
-        if (handshakeComplete && this.conn.open) {
-          console.log('[MP] setupHostListeners: Rejecting additional connection (already matched with a guest)');
-          conn.close();
-          return;
-        }
 
-        console.warn('[MP] setupHostListeners: Replacing pre-handshake guest connection');
+      // Always accept the newest connection attempt from a guest.
+      // Only reject if we already have a CONFIRMED, OPEN connection and handshake is done.
+      const handshakeComplete = this.lobbyState !== 'creating';
+      if (this.conn && handshakeComplete && this.conn.open) {
+        console.log('[MP] setupHostListeners: Rejecting additional connection (already matched with a guest)');
+        conn.close();
+        return;
+      }
+
+      // Replace any prior pending connection (guest may have retried with fresh peer)
+      if (this.conn) {
+        console.warn('[MP] setupHostListeners: Replacing stale/pending guest connection');
         try { this.conn.close(); } catch { /* ignore */ }
         this.conn = null;
       }
@@ -331,24 +396,24 @@ export class MultiplayerManager {
       let openHandled = false;
       const openTimeout = setTimeout(() => {
         if (!openHandled && !conn.open) {
-          console.warn('[MP] setupHostListeners: Guest connection open timeout; clearing pending slot');
+          console.warn('[MP] setupHostListeners: Guest connection open timeout (15s); clearing pending slot');
+          openHandled = true;
           conn.close();
           if (this.conn === conn) {
             this.conn = null;
           }
-          this.emit({ kind: 'error', message: 'Guest connection failed to establish' });
+          // Don't emit error to UI — guest will retry and host will accept the new connection
+          console.log('[MP] setupHostListeners: Ready for next guest connection attempt');
         }
-      }, 10000);
+      }, 15000); // 15s to allow slow ICE negotiation
 
       const onOpen = () => {
-        console.log('[MP] setupHostListeners: Connection channel opened');
+        console.log('[MP] setupHostListeners: Connection channel opened to guest:', conn.peer);
         if (openHandled) return;
         openHandled = true;
         clearTimeout(openTimeout);
         this.setupDataChannel();
         console.log('[MP] setupHostListeners: Data channel set up, sending ping to guest');
-        // Don't emit opponent-connected yet! Wait for guest to confirm via handshake.
-        // Send a ready ping - when guest responds, THEN we're connected.
         this.send({ type: 'ping' });
       };
 
@@ -363,7 +428,7 @@ export class MultiplayerManager {
       conn.on('error', (err) => {
         clearTimeout(openTimeout);
         if (!openHandled && this.conn === conn) {
-          console.warn('[MP] setupHostListeners: Pending guest connection error before open:', err.message);
+          console.warn('[MP] setupHostListeners: Pending guest connection error:', err.message);
           this.conn = null;
         }
       });
@@ -385,172 +450,198 @@ export class MultiplayerManager {
     console.log('[MP] joinRoom: Normalized code:', this.roomCode);
     this.setState('joining');
 
+    const generation = ++this.joinGeneration;
+    const MAX_JOIN_ATTEMPTS = 4;
+    const OPEN_TIMEOUT_MS = 14000;  // 14s per attempt for ICE negotiation
+    const HANDSHAKE_TIMEOUT_MS = 8000; // 8s for ping/pong after channel opens
+
     return new Promise<void>((resolve, reject) => {
       let settled = false;
-      let attempt = 0;
-      let attemptToken = 0;
-      let stateCheckInterval: ReturnType<typeof setInterval> | null = null;
-      let openTimeout: ReturnType<typeof setTimeout> | null = null;
-      const MAX_JOIN_ATTEMPTS = 3;
-      const OPEN_TIMEOUT_MS = 12000;
 
-      const clearAttemptTimers = () => {
-        if (stateCheckInterval) {
-          clearInterval(stateCheckInterval);
-          stateCheckInterval = null;
-        }
-        if (openTimeout) {
-          clearTimeout(openTimeout);
-          openTimeout = null;
-        }
+      const settle = (success: boolean, err?: Error) => {
+        if (settled || generation !== this.joinGeneration) return;
+        settled = true;
+        if (this.joinRoomTimeout) { clearTimeout(this.joinRoomTimeout); this.joinRoomTimeout = null; }
+        this.joinRoomResolve = null;
+        if (success) resolve(); else reject(err ?? new Error('Join failed'));
       };
 
-      const failJoin = (message: string, err?: Error) => {
-        if (this.joinRoomReject) {
-          this.emit({ kind: 'error', message });
-          this.joinRoomReject(err ?? new Error(message));
-        }
-      };
+      // Store resolve callback for handshake completion (called from handleMessage on ping)
+      this.joinRoomResolve = () => settle(true);
 
-      const retryOrFail = (reason: string, fallbackMessage: string) => {
-        if (settled) return;
-        console.warn(`[MP] joinRoom: Attempt ${attempt}/${MAX_JOIN_ATTEMPTS} failed: ${reason}`);
-        clearAttemptTimers();
-        this.conn?.close();
+      const startAttempt = (attempt: number) => {
+        if (settled || generation !== this.joinGeneration) return;
+
+        // Pick ICE config for this attempt (cycles through configs, last uses relay-only)
+        const iceConfigIdx = attempt >= MAX_JOIN_ATTEMPTS
+          ? ICE_CONFIGS.length - 1 // last attempt → relay-only
+          : Math.min(attempt - 1, ICE_CONFIGS.length - 1);
+        const iceConfig = ICE_CONFIGS[iceConfigIdx];
+        const isRelay = (iceConfig as any).iceTransportPolicy === 'relay';
+        console.log(`[MP] joinRoom: ── Attempt ${attempt}/${MAX_JOIN_ATTEMPTS} ── ICE config #${iceConfigIdx}${isRelay ? ' (RELAY ONLY)' : ''}`);
+
+        // **CRITICAL FIX**: Destroy old peer and create a FRESH one per attempt.
+        // PeerJS keeps internal state from previous failed connections that prevents
+        // subsequent connect() calls from completing properly.
+        if (this.peer) {
+          try { this.peer.destroy(); } catch { /* ignore */ }
+          this.peer = null;
+        }
         this.conn = null;
 
-        if (attempt < MAX_JOIN_ATTEMPTS) {
-          startAttempt();
-          return;
-        }
+        const peer = new Peer({ debug: 2, config: iceConfig });
+        this.peer = peer;
 
-        failJoin(fallbackMessage, new Error(reason));
-      };
+        let attemptTimedOut = false;
+        let peerOpened = false;
 
-      const startAttempt = () => {
-        if (settled || !this.peer) return;
-
-        attempt += 1;
-        const token = ++attemptToken;
-        const hostId = PEER_PREFIX + this.roomCode;
-
-        console.log(`[MP] joinRoom: Attempt ${attempt}/${MAX_JOIN_ATTEMPTS} connecting to host ID:`, hostId);
-
-        this.conn?.close();
-        this.conn = this.peer.connect(hostId, { serialization: 'json' });
-
-        console.log('[MP] joinRoom: Connection object created, initial state:', {
-          open: this.conn.open,
-          peer: this.conn.peer,
-          type: this.conn.type,
-          metadata: this.conn.metadata,
-        });
-
-        monitorICE(this.conn, `GUEST[attempt-${attempt}]`);
-
-        this.conn.on('open', () => {
-          if (settled || token !== attemptToken) return;
-          clearAttemptTimers();
-          console.log('[MP] joinRoom: Connection channel opened, waiting for ping from host');
-
-          this.setupDataChannel();
-          console.log('[MP] joinRoom: Data channel set up, starting 10s handshake timeout');
-
-          this.joinRoomTimeout = setTimeout(() => {
-            if (settled || token !== attemptToken) return;
-            console.error('[MP] joinRoom: Handshake timeout - no ping received from host');
-            retryOrFail('Handshake timeout', 'Handshake timed out. Host did not respond.');
-          }, 10000);
-        });
-
-        this.conn.on('error', (err) => {
-          if (settled || token !== attemptToken) return;
-          console.error('[MP] joinRoom: Connection error:', err);
-          retryOrFail(err.message || 'Connection error', `Failed to connect: ${err.message}`);
-        });
-
-        this.conn.on('close', () => {
-          if (settled || token !== attemptToken) return;
-          console.warn('[MP] joinRoom: Connection closed before handshake completed');
-          retryOrFail('Connection closed early', 'Connection closed before it could open. Check the room code.');
-        });
-
-        stateCheckInterval = setInterval(() => {
-          if (this.conn && token === attemptToken) {
-            console.log('[MP] joinRoom: Connection state check - open:', this.conn.open, 'peer:', this.conn.peer);
+        // Peer-level timeout: if signaling server doesn't respond
+        const peerTimeout = setTimeout(() => {
+          if (settled || generation !== this.joinGeneration || peerOpened) return;
+          console.error(`[MP] joinRoom: Attempt ${attempt} - signaling server timeout`);
+          attemptTimedOut = true;
+          try { peer.destroy(); } catch { /* ignore */ }
+          if (attempt < MAX_JOIN_ATTEMPTS) {
+            console.log(`[MP] joinRoom: Retrying (attempt ${attempt + 1})...`);
+            startAttempt(attempt + 1);
+          } else {
+            this.emit({ kind: 'error', message: 'Could not reach the multiplayer server after multiple attempts.' });
+            settle(false, new Error('Signaling server timeout'));
           }
-        }, 2000);
+        }, 10000);
 
-        openTimeout = setTimeout(() => {
-          if (settled || token !== attemptToken) return;
-          console.error(`[MP] joinRoom: Attempt ${attempt} open-timeout (${OPEN_TIMEOUT_MS}ms)`);
-          console.error('[MP] joinRoom: Final connection state:', this.conn ? {
-            open: this.conn.open,
-            peer: this.conn.peer,
-            type: this.conn.type,
-          } : 'null');
-          retryOrFail('Connection open timeout', 'Connection timed out. The host may be offline, unreachable, or behind strict NAT.');
-        }, OPEN_TIMEOUT_MS);
+        peer.on('open', (id) => {
+          if (settled || generation !== this.joinGeneration || attemptTimedOut) return;
+          clearTimeout(peerTimeout);
+          peerOpened = true;
+          console.log(`[MP] joinRoom: Attempt ${attempt} - peer opened with ID: ${id}`);
+
+          const hostId = PEER_PREFIX + this.roomCode;
+          console.log(`[MP] joinRoom: Attempt ${attempt} - connecting to host:`, hostId);
+
+          const conn = peer.connect(hostId, {
+            serialization: 'json',
+            reliable: true,
+          });
+          this.conn = conn;
+
+          console.log(`[MP] joinRoom: Attempt ${attempt} - connection object created`);
+          monitorICE(conn, `GUEST[attempt-${attempt}]`);
+
+          // Timer: data channel must open within OPEN_TIMEOUT_MS
+          const openTimer = setTimeout(() => {
+            if (settled || generation !== this.joinGeneration) return;
+            console.error(`[MP] joinRoom: Attempt ${attempt} - data channel open timeout (${OPEN_TIMEOUT_MS}ms)`);
+            // Log final state for debugging
+            const pc = (conn as any).peerConnection as RTCPeerConnection | undefined;
+            if (pc) {
+              console.log(`[MP] joinRoom: Attempt ${attempt} - ICE: ${pc.iceConnectionState}, Conn: ${pc.connectionState}, Gathering: ${pc.iceGatheringState}`);
+            }
+            try { conn.close(); } catch { /* ignore */ }
+            if (this.conn === conn) this.conn = null;
+
+            if (attempt < MAX_JOIN_ATTEMPTS) {
+              console.log(`[MP] joinRoom: Retrying (attempt ${attempt + 1})...`);
+              this.emit({ kind: 'error', message: `Connection attempt ${attempt} failed, retrying...` });
+              startAttempt(attempt + 1);
+            } else {
+              this.emit({ kind: 'error', message: 'Connection timed out after all attempts. The host may be behind a strict firewall.' });
+              settle(false, new Error('All connection attempts timed out'));
+            }
+          }, OPEN_TIMEOUT_MS);
+
+          conn.on('open', () => {
+            if (settled || generation !== this.joinGeneration) return;
+            clearTimeout(openTimer);
+            console.log(`[MP] joinRoom: Attempt ${attempt} - ✓ channel OPEN, waiting for host ping...`);
+
+            this.setupDataChannel();
+
+            // Handshake timeout: host must send ping within HANDSHAKE_TIMEOUT_MS
+            this.joinRoomTimeout = setTimeout(() => {
+              if (settled || generation !== this.joinGeneration) return;
+              console.error(`[MP] joinRoom: Attempt ${attempt} - handshake timeout (no ping from host)`);
+              try { conn.close(); } catch { /* ignore */ }
+              if (this.conn === conn) this.conn = null;
+
+              if (attempt < MAX_JOIN_ATTEMPTS) {
+                this.emit({ kind: 'error', message: `Handshake timeout on attempt ${attempt}, retrying...` });
+                startAttempt(attempt + 1);
+              } else {
+                this.emit({ kind: 'error', message: 'Host did not respond to handshake after all attempts.' });
+                settle(false, new Error('Handshake timeout'));
+              }
+            }, HANDSHAKE_TIMEOUT_MS);
+          });
+
+          conn.on('error', (err) => {
+            if (settled || generation !== this.joinGeneration) return;
+            clearTimeout(openTimer);
+            console.error(`[MP] joinRoom: Attempt ${attempt} - connection error:`, err);
+            try { conn.close(); } catch { /* ignore */ }
+            if (this.conn === conn) this.conn = null;
+
+            if (attempt < MAX_JOIN_ATTEMPTS) {
+              this.emit({ kind: 'error', message: `Connection error on attempt ${attempt}, retrying...` });
+              startAttempt(attempt + 1);
+            } else {
+              this.emit({ kind: 'error', message: `Connection error: ${err.message}` });
+              settle(false, new Error(err.message));
+            }
+          });
+
+          conn.on('close', () => {
+            if (settled || generation !== this.joinGeneration) return;
+            clearTimeout(openTimer);
+            console.warn(`[MP] joinRoom: Attempt ${attempt} - connection closed prematurely`);
+            if (this.conn === conn) this.conn = null;
+
+            if (attempt < MAX_JOIN_ATTEMPTS) {
+              this.emit({ kind: 'error', message: `Connection dropped on attempt ${attempt}, retrying...` });
+              startAttempt(attempt + 1);
+            } else {
+              this.emit({ kind: 'error', message: 'Connection closed. Check the room code and try again.' });
+              settle(false, new Error('Connection closed'));
+            }
+          });
+
+          // If already open (race), fire immediately
+          if (conn.open) {
+            conn.emit('open');
+          }
+        });
+
+        peer.on('error', (err) => {
+          if (settled || generation !== this.joinGeneration || attemptTimedOut) return;
+          clearTimeout(peerTimeout);
+          console.error(`[MP] joinRoom: Attempt ${attempt} - peer error:`, err.type, err.message);
+
+          // peer-unavailable means the host peer ID doesn't exist on the signaling server
+          if (err.type === 'peer-unavailable') {
+            this.emit({ kind: 'error', message: 'Room not found. Make sure the host has created the room and the code is correct.' });
+            settle(false, new Error('Room not found'));
+            return;
+          }
+
+          if (attempt < MAX_JOIN_ATTEMPTS) {
+            this.emit({ kind: 'error', message: `Network error on attempt ${attempt}, retrying...` });
+            startAttempt(attempt + 1);
+          } else {
+            this.emit({ kind: 'error', message: err.message });
+            settle(false, new Error(err.message));
+          }
+        });
+
+        peer.on('disconnected', () => {
+          if (settled || generation !== this.joinGeneration || attemptTimedOut) return;
+          console.warn(`[MP] joinRoom: Attempt ${attempt} - peer disconnected from signaling`);
+          // Try to reconnect to signaling
+          this.schedulePeerReconnect();
+        });
       };
 
-      // Store callbacks for handshake completion
-      this.joinRoomResolve = () => {
-        if (settled) return;
-        settled = true;
-        clearAttemptTimers();
-        if (this.joinRoomTimeout) {
-          clearTimeout(this.joinRoomTimeout);
-          this.joinRoomTimeout = null;
-        }
-        this.joinRoomResolve = null;
-        this.joinRoomReject = null;
-        resolve();
-      };
-
-      this.joinRoomReject = (err: Error) => {
-        if (settled) return;
-        settled = true;
-        clearAttemptTimers();
-        if (this.joinRoomTimeout) {
-          clearTimeout(this.joinRoomTimeout);
-          this.joinRoomTimeout = null;
-        }
-        this.joinRoomResolve = null;
-        this.joinRoomReject = null;
-        reject(err);
-      };
-
-      this.peer = new Peer({ debug: 2, config: ICE_CONFIG });
-
-      this.peer.on('open', () => {
-        console.log('[MP] joinRoom: Guest peer opened with ID:', this.peer!.id);
-        console.log('[MP] joinRoom: Peer status - disconnected:', this.peer!.disconnected, 'destroyed:', this.peer!.destroyed);
-        startAttempt();
-      });
-
-      this.peer.on('error', (err) => {
-        console.error('[MP] joinRoom: Peer error:', err.type, err.message);
-        if (settled) return;
-        settled = true;
-        this.emit({ kind: 'error', message: err.message });
-        reject(err);
-      });
-
-      this.peer.on('disconnected', () => {
-        console.warn('[MP] joinRoom: Peer disconnected from signaling server');
-        this.schedulePeerReconnect();
-      });
-
-      this.peer.on('close', () => {
-        console.warn('[MP] joinRoom: Peer closed');
-      });
-
-      // Peer itself may fail to reach signaling server
-      setTimeout(() => {
-        if (!settled) {
-          failJoin('Could not reach the multiplayer server. Check your internet connection.', new Error('Signaling server timeout'));
-        }
-      }, 20000);
+      // Start first attempt
+      startAttempt(1);
     });
   }
 
@@ -713,6 +804,7 @@ export class MultiplayerManager {
   // ── Cleanup ────────────────────────────────────────────────────────────
 
   cleanup(): void {
+    this.joinGeneration++; // cancel any in-flight join attempts
     this.stopScoreSync();
     this.conn?.close();
     this.conn = null;
@@ -732,7 +824,6 @@ export class MultiplayerManager {
       this.signalingReconnectTimer = null;
     }
     this.joinRoomResolve = null;
-    this.joinRoomReject = null;
     this.setState('idle');
   }
 }
