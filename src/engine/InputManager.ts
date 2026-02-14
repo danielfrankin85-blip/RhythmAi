@@ -125,7 +125,11 @@ export class InputManager {
     this.laneHeld[lane] = true;
     this.queue.push({
       lane,
-      timestamp: performance.now(),
+      // Use the browser's high-res event timestamp for accurate input timing.
+      // e.timeStamp is set by the browser when the OS registers the keypress,
+      // which is more accurate than performance.now() called inside the handler
+      // (especially during GC pauses or browser jank).
+      timestamp: e.timeStamp || performance.now(),
       type: 'press',
     });
   }
@@ -139,7 +143,7 @@ export class InputManager {
     this.laneHeld[lane] = false;
     this.queue.push({
       lane,
-      timestamp: performance.now(),
+      timestamp: e.timeStamp || performance.now(),
       type: 'release',
     });
   }

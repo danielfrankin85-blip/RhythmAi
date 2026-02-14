@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: GameEngineConfig = {
   hitWindow: { perfect: 0.045, good: 0.10 },
   keyBindings: ['d', 'f', 'j', 'k'],
   hitFadeDuration: 0.3,
-  missThreshold: 0.25,
+  missThreshold: 0.40,
   spawnLeadTime: 3,
   targetFPS: TargetFPS.FPS_100,
 };
@@ -94,6 +94,10 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   private fixedDeltaTime = 1 / 100; // Updated based on targetFPS
   private accumulator = 0;
   private lastFrameTime = 0;
+
+  // ── Jank protection ──────────────────────────────────────────────────
+  /** Last songTime that was processed (for detecting time jumps) */
+  private lastSongTime = 0;
 
   // Pause bookkeeping
   private pauseKey = 'escape';
@@ -379,15 +383,19 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   // ── Update (logic tick) ──────────────────────────────────────────────────
 
   private update(songTime: number): void {
+    const now = performance.now();
+    const prevSongTime = this.lastSongTime;
+    this.lastSongTime = songTime;
+
     // 1. Spawn upcoming notes
     this.spawnNotes(songTime);
 
-    // 2. Process player input
+    // 2. Process player input (with timestamp-based timing correction)
     const inputs = this.input.consumeQueue();
-    this.processInputs(inputs, songTime);
+    this.processInputs(inputs, songTime, now);
 
-    // 3. Update note positions & detect misses
-    this.updateNotes(songTime);
+    // 3. Update note positions & detect misses (with jank protection)
+    this.updateNotes(songTime, prevSongTime);
 
     // 4. Check game-over condition
     this.checkGameOver(songTime);
@@ -422,12 +430,23 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   /**
    * Match each press event to the closest ACTIVE note in that lane.
    * Handle hold note initiation on press, hold completion on release.
+   *
+   * CRITICAL: Uses the input event's timestamp to reconstruct the audio time
+   * when the key was actually pressed, rather than the current frame's songTime.
+   * This prevents false misses during browser jank/GC pauses where the audio
+   * keeps playing but the game loop is frozen.
    */
-  private processInputs(inputs: InputEvent[], songTime: number): void {
+  private processInputs(inputs: InputEvent[], songTime: number, now: number): void {
     for (const evt of inputs) {
+      // ── Reconstruct audio time at the moment the key was pressed ──
+      // The input event has a timestamp from when the key was actually pressed.
+      // We offset songTime backwards by the age of the input to get tight timing.
+      const inputAge = Math.max(0, (now - evt.timestamp) / 1000); // seconds since press
+      const correctedSongTime = songTime - inputAge;
+
       if (evt.type === 'release') {
         // Check for active hold notes in this lane
-        this.processHoldRelease(evt.lane, songTime);
+        this.processHoldRelease(evt.lane, correctedSongTime);
         continue;
       }
 
@@ -441,7 +460,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
         if (note.state !== NoteState.ACTIVE) continue;
         if (note.lane !== evt.lane) continue;
 
-        const error = songTime - note.time;
+        const error = correctedSongTime - note.time;
         const absError = Math.abs(error);
 
         // Must be within the outer (good) hit window
@@ -452,7 +471,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
       }
 
       if (bestNote) {
-        const timingError = songTime - bestNote.time;
+        const timingError = correctedSongTime - bestNote.time;
         const judgment = this.scoreEngine.judge(timingError);
 
         if (judgment) {
@@ -460,7 +479,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
           if (bestNote.holdDuration && bestNote.holdDuration > 0) {
             bestNote.state = NoteState.HIT;
             bestNote.judgment = judgment;
-            bestNote.judgedAt = songTime;
+            bestNote.judgedAt = correctedSongTime;
             bestNote.isBeingHeld = true;
             bestNote.holdCompleted = false;
             bestNote.holdDropped = false;
@@ -481,7 +500,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
             // Regular tap note
             bestNote.state = NoteState.HIT;
             bestNote.judgment = judgment;
-            bestNote.judgedAt = songTime;
+            bestNote.judgedAt = correctedSongTime;
 
             const hitResult = this.scoreEngine.registerHit(judgment);
             this.renderer.addSplash(bestNote.lane, judgment, songTime);
@@ -564,10 +583,24 @@ export class GameEngine extends EventEmitter<GameEventMap> {
    * Mark notes as MISSED if they've passed the hit zone + miss threshold.
    * Handle hold note timing (auto-complete or drop).
    * Cull dead notes (faded hit, old miss).
+   *
+   * JANK PROTECTION: If a large time jump is detected (browser GC, tab switch,
+   * compositing stall), notes that were in the playable zone before the jump
+   * get extra grace time instead of being instantly marked as missed.
    */
-  private updateNotes(songTime: number): void {
+  private updateNotes(songTime: number, prevSongTime: number): void {
     const hitZoneY = this.renderer.getHitZoneY();
     const { scrollSpeed, hitFadeDuration, missThreshold } = this.config;
+
+    // Detect time jumps caused by browser jank.
+    // If songTime jumped forward by more than 2× the fixed timestep,
+    // a stall occurred. Give notes extra grace.
+    const timeJump = songTime - prevSongTime;
+    const isJank = timeJump > this.fixedDeltaTime * 3;
+    // During jank, extend miss threshold by the jank duration (capped at 500ms)
+    const effectiveMissThreshold = isJank
+      ? missThreshold + Math.min(timeJump, 0.5)
+      : missThreshold;
 
     const toRemove: number[] = [];
 
@@ -619,7 +652,7 @@ export class GameEngine extends EventEmitter<GameEventMap> {
       }
 
       // Miss detection – note has passed the hit zone beyond the window
-      if (note.state === NoteState.ACTIVE && songTime - note.time > missThreshold) {
+      if (note.state === NoteState.ACTIVE && songTime - note.time > effectiveMissThreshold) {
         note.state = NoteState.MISSED;
         note.judgedAt = songTime;
 
