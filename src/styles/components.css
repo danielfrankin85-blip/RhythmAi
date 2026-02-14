@@ -1440,6 +1440,8 @@
   padding: var(--space-2xl);
   min-width: 500px;
   max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
   box-shadow: var(--shadow-2xl), var(--glow-blue);
   animation: slideUp var(--transition-normal) ease-out;
 }
