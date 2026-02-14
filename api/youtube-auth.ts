@@ -11,67 +11,145 @@ interface VideoInfo {
   source: string;
 }
 
-// Use YouTube Data API v3 + innertube for stream extraction
-async function extractWithApiKey(videoId: string, apiKey: string): Promise<VideoInfo> {
-  // Get video metadata from YouTube Data API
+interface GoogleApiError {
+  error?: {
+    code?: number;
+    message?: string;
+    errors?: Array<{ reason?: string; message?: string }>;
+  };
+}
+
+interface PlayerFormat {
+  mimeType?: string;
+  bitrate?: number;
+  url?: string;
+  signatureCipher?: string;
+  cipher?: string;
+}
+
+function classifyGoogleApiError(status: number, body: GoogleApiError | null): string {
+  const reason = body?.error?.errors?.[0]?.reason ?? '';
+  const message = body?.error?.message ?? `YouTube API error (${status})`;
+
+  if (reason === 'accessNotConfigured' || reason === 'forbidden') {
+    return 'Your API key is blocked from this server request. In Google Cloud key settings, remove HTTP referrer restriction for this key or create a server key with YouTube Data API v3 enabled.';
+  }
+
+  if (reason === 'keyInvalid') {
+    return 'The API key is invalid. Paste a valid YouTube Data API v3 key.';
+  }
+
+  if (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded') {
+    return 'Your YouTube API quota is exhausted for today. Try again tomorrow or use a different key.';
+  }
+
+  return message;
+}
+
+async function fetchVideoMeta(videoId: string, apiKey: string): Promise<{ title: string; duration: number }> {
   const metaResp = await fetch(
-    `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${apiKey}`,
+    `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status&id=${videoId}&key=${apiKey}`,
     { signal: AbortSignal.timeout(10000) }
   );
 
   if (!metaResp.ok) {
-    throw new Error(`YouTube API error: ${metaResp.status}`);
+    const body = (await metaResp.json().catch(() => null)) as GoogleApiError | null;
+    throw new Error(classifyGoogleApiError(metaResp.status, body));
   }
 
   const metaData = await metaResp.json();
   const video = metaData.items?.[0];
   if (!video) {
-    throw new Error('Video not found');
+    throw new Error('Video not found (private, deleted, or unavailable to this key).');
+  }
+
+  if (video.status?.embeddable === false) {
+    throw new Error('This video is not embeddable, so direct stream extraction is blocked.');
   }
 
   const title = video.snippet?.title ?? `YouTube – ${videoId}`;
   const durationISO = video.contentDetails?.duration ?? 'PT0S';
-  const duration = parseDuration(durationISO);
+  return { title, duration: parseDuration(durationISO) };
+}
 
-  // Use InnerTube API (same as YouTube mobile app) to get stream URLs
-  const playerResp = await fetch('https://www.youtube.com/youtubei/v1/player', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      context: {
-        client: {
-          clientName: 'ANDROID',
-          clientVersion: '17.31.35',
-          androidSdkVersion: 30,
-        },
-      },
-      videoId,
-    }),
-    signal: AbortSignal.timeout(15000),
-  });
+function extractDirectUrl(format: PlayerFormat): string | null {
+  if (format.url) return format.url;
 
-  if (!playerResp.ok) {
-    throw new Error('Failed to fetch stream URLs');
+  const cipher = format.signatureCipher ?? format.cipher;
+  if (!cipher) return null;
+
+  const params = new URLSearchParams(cipher);
+  const baseUrl = params.get('url');
+  if (!baseUrl) return null;
+
+  const sig = params.get('sig');
+  const sp = params.get('sp') ?? 'signature';
+
+  if (sig) {
+    const url = new URL(baseUrl);
+    url.searchParams.set(sp, sig);
+    return url.toString();
   }
 
-  const playerData = await playerResp.json();
-  const formats = playerData.streamingData?.adaptiveFormats ?? [];
-  const audioFormats = formats.filter((f: { mimeType: string }) => 
-    f.mimeType?.startsWith('audio/')
-  );
+  return null;
+}
 
-  const best = audioFormats.sort((a: { bitrate: number }, b: { bitrate: number }) => 
-    b.bitrate - a.bitrate
-  )[0];
+async function fetchPlayerData(videoId: string): Promise<string | null> {
+  const clients = [
+    { clientName: 'ANDROID', clientVersion: '19.09.37', androidSdkVersion: 34 },
+    { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0' },
+    { clientName: 'IOS', clientVersion: '20.03.02' },
+  ];
 
-  if (!best?.url) {
-    throw new Error('No audio stream found');
+  for (const client of clients) {
+    try {
+      const playerResp = await fetch('https://www.youtube.com/youtubei/v1/player', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: { client },
+          videoId,
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (!playerResp.ok) continue;
+
+      const playerData = await playerResp.json();
+      const adaptive = (playerData.streamingData?.adaptiveFormats ?? []) as PlayerFormat[];
+      const muxed = (playerData.streamingData?.formats ?? []) as PlayerFormat[];
+      const allFormats = [...adaptive, ...muxed];
+
+      const audioFormats = allFormats
+        .filter((f) => f.mimeType?.startsWith('audio/'))
+        .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+
+      for (const format of audioFormats) {
+        const directUrl = extractDirectUrl(format);
+        if (directUrl) return directUrl;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function extractWithApiKey(videoId: string, apiKey: string): Promise<VideoInfo> {
+  const meta = await fetchVideoMeta(videoId, apiKey);
+  const audioUrl = await fetchPlayerData(videoId);
+
+  if (!audioUrl) {
+    throw new Error('YouTube returned only protected/ciphered streams for this video. Try another video or leave API key blank to use proxy fallback.');
   }
 
   return {
-    title,
-    audioUrl: best.url,
-    duration,
+    title: meta.title,
+    audioUrl,
+    duration: meta.duration,
     source: 'youtube-api',
   };
 }
@@ -111,8 +189,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err) {
     const msg = (err as Error).message;
     console.error(`[YouTube Auth API] ✗ Failed: ${msg}`);
-    return res.status(502).json({
-      error: `Failed to extract video: ${msg}\n\nCheck that your API key is valid and has YouTube Data API v3 enabled.`,
+
+    const isKeyIssue =
+      msg.includes('API key') ||
+      msg.includes('quota') ||
+      msg.includes('Google Cloud') ||
+      msg.includes('forbidden') ||
+      msg.includes('invalid');
+
+    return res.status(isKeyIssue ? 403 : 502).json({
+      error: msg,
     });
   }
 }
