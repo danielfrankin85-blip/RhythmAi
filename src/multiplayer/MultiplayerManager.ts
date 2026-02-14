@@ -307,16 +307,17 @@ export class MultiplayerManager {
     
     this.peer.on('connection', (conn) => {
       console.log('[MP] setupHostListeners: Guest connection received from:', conn.peer);
-      // Accept only one active guest.
-      // If we have a stale pending connection that never opened, replace it.
+      // While still in 'creating', allow replacing pending connections.
+      // Only hard-lock additional guests after handshake completion changes state.
       if (this.conn) {
-        if (this.conn.open) {
-          console.log('[MP] setupHostListeners: Rejecting additional connection (already have active guest)');
+        const handshakeComplete = this.lobbyState !== 'creating';
+        if (handshakeComplete && this.conn.open) {
+          console.log('[MP] setupHostListeners: Rejecting additional connection (already matched with a guest)');
           conn.close();
           return;
         }
 
-        console.warn('[MP] setupHostListeners: Replacing stale pending guest connection');
+        console.warn('[MP] setupHostListeners: Replacing pre-handshake guest connection');
         try { this.conn.close(); } catch { /* ignore */ }
         this.conn = null;
       }
