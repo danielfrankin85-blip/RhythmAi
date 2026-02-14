@@ -7,19 +7,19 @@ export const config = {
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.adminforge.de',
-  'https://api.piped.yt',
-  'https://pipedapi.tokhmi.xyz',
-  'https://api-piped.mha.fi',
-  'https://pipedapi.syncpundit.io',
+  'https://pipedapi.aeong.one',
+  'https://watchapi.whatever.social',
+  'https://api.piped.privacydev.net',
+  'https://pipedapi.palveluntarjoaja.eu',
 ];
 
 const INVIDIOUS_INSTANCES = [
   'https://invidious.fdn.fr',
   'https://vid.puffyan.us',
-  'https://invidious.lunar.icu',
-  'https://inv.tux.pizza',
-  'https://invidious.privacydev.net',
-  'https://yewtu.be',
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://inv.riverside.rocks',
+  'https://invidious.drgns.space',
 ];
 
 function normalizeBase(url: string): string {
@@ -83,7 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const base of pipedCandidates) {
     try {
       const resp = await fetch(`${base}/streams/${videoId}`, {
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(12000),
         headers: { 'User-Agent': 'RhythmAI/1.0' },
       });
       if (!resp.ok) continue;
@@ -102,7 +102,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
     } catch (err) {
-      console.log(`[YouTube API] Piped ${base} failed: ${(err as Error).message}`);
+      const msg = (err as Error).message;
+      console.log(`[YouTube API] Piped ${base} failed: ${msg}`);
     }
   }
 
@@ -116,7 +117,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const base of invidiousCandidates) {
     try {
       const resp = await fetch(`${base}/api/v1/videos/${videoId}`, {
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(12000),
         headers: { 'User-Agent': 'RhythmAI/1.0' },
       });
       if (!resp.ok) continue;
@@ -134,11 +135,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
     } catch (err) {
-      console.log(`[YouTube API] Invidious ${base} failed: ${(err as Error).message}`);
+      const msg = (err as Error).message;
+      console.log(`[YouTube API] Invidious ${base} failed: ${msg}`);
     }
   }
 
   console.error(`[YouTube API] ✗ All methods failed for ${videoId}`);
+  
+  // ── Final fallback: Try cobalt.tools API ──────────────────────────────
+  try {
+    console.log('[YouTube API] Trying cobalt.tools as final fallback...');
+    const cobaltResp = await fetch('https://api.cobalt.tools/api/json', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        isAudioOnly: true,
+        filenamePattern: 'basic',
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (cobaltResp.ok) {
+      const cobaltData = await cobaltResp.json();
+      if (cobaltData.status === 'stream' && cobaltData.url) {
+        console.log('[YouTube API] ✓ Success via cobalt.tools');
+        return res.status(200).json({
+          title: `YouTube – ${videoId}`,
+          audioUrl: cobaltData.url,
+          duration: 0,
+          source: 'cobalt',
+        });
+      }
+    }
+  } catch (err) {
+    console.log(`[YouTube API] cobalt.tools failed: ${(err as Error).message}`);
+  }
+
   return res.status(502).json({
     error: 'Could not extract audio for this video.\n\nPossible reasons:\n• Video is region-restricted or private\n• All proxy servers are temporarily unavailable\n• Video has unusual encoding\n\nTry another video or wait a moment and try again.',
   });
