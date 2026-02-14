@@ -1,16 +1,26 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import ytdl from '@distube/ytdl-core';
 
+export const config = {
+  maxDuration: 60, // Allow up to 60s for extraction attempts
+};
+
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.adminforge.de',
   'https://api.piped.yt',
+  'https://pipedapi.tokhmi.xyz',
+  'https://api-piped.mha.fi',
+  'https://pipedapi.syncpundit.io',
 ];
 
 const INVIDIOUS_INSTANCES = [
   'https://invidious.fdn.fr',
   'https://vid.puffyan.us',
   'https://invidious.lunar.icu',
+  'https://inv.tux.pizza',
+  'https://invidious.privacydev.net',
+  'https://yewtu.be',
 ];
 
 function normalizeBase(url: string): string {
@@ -63,8 +73,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing or invalid video ID' });
   }
 
+  console.log(`[YouTube API] Attempting to extract audio for video: ${videoId}`);
+  const errors: string[] = [];
+
   // ── Try direct YouTube extraction first (most reliable) ───────────────
   try {
+    console.log('[YouTube API] Trying ytdl-core direct extraction...');
     const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
     const audioFormats = ytdl
       .filterFormats(info.formats, 'audioonly')
@@ -73,6 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const best = audioFormats[0];
     if (best?.url) {
+      console.log('[YouTube API] ✓ Success via ytdl-core');
       return res.status(200).json({
         title: info.videoDetails?.title ?? `YouTube – ${videoId}`,
         audioUrl: best.url,
@@ -80,11 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         source: 'youtube-direct',
       });
     }
-  } catch {
-    // Fall through to public proxy instances below
-  }
-
-  // ── Try Piped (dynamic list first, static fallback) ───────────────────
+    erole.log('[YouTube API] Trying Piped instances...');
   const pipedCandidates = Array.from(new Set([
     ...(await getDynamicPipedInstances()),
     ...PIPED_INSTANCES.map(normalizeBase),
@@ -93,7 +104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const base of pipedCandidates) {
     try {
       const resp = await fetch(`${base}/streams/${videoId}`, {
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
         headers: { 'User-Agent': 'RhythmAI/1.0' },
       });
       if (!resp.ok) continue;
@@ -103,6 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .filter((s) => s.mimeType?.startsWith('audio/'))
         .sort((a, b) => b.bitrate - a.bitrate)[0];
       if (best?.url) {
+        console.log(`[YouTube API] ✓ Success via Piped: ${base}`);
         return res.status(200).json({
           title: data.title ?? `YouTube – ${videoId}`,
           audioUrl: best.url,
@@ -110,10 +122,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           source: 'piped',
         });
       }
-    } catch { /* next instance */ }
-  }
-
-  // ── Try Invidious (dynamic list first, static fallback) ───────────────
+    } catch (err) {
+      console.log(`[YouTube API] Piped ${base} failed: ${(err as Error).message}`);
+   
+        return res.status(200).json({
+          title: data.title ?? `YouTube – ${videoId}`,
+          audioUrl: best.url,
+          duration: data.duration ?? 0,
+          source: 'piped',
+        });
+      }
+    } ole.log('[YouTube API] Trying Invidious instances...');
   const invidiousCandidates = Array.from(new Set([
     ...(await getDynamicInvidiousInstances()),
     ...INVIDIOUS_INSTANCES.map(normalizeBase),
@@ -122,7 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const base of invidiousCandidates) {
     try {
       const resp = await fetch(`${base}/api/v1/videos/${videoId}`, {
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
         headers: { 'User-Agent': 'RhythmAI/1.0' },
       });
       if (!resp.ok) continue;
@@ -131,6 +150,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         data.adaptiveFormats?.filter((f: { type: string }) => f.type?.startsWith('audio/')) ?? [];
       const best = audioStreams.sort((a, b) => parseInt(b.bitrate) - parseInt(a.bitrate))[0];
       if (best?.url) {
+        console.log(`[YouTube API] ✓ Success via Invidious: ${base}`);
         return res.status(200).json({
           title: data.title ?? `YouTube – ${videoId}`,
           audioUrl: best.url,
@@ -138,7 +158,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           source: 'invidious',
         });
       }
-    } catch { /* next */ }
+    } catch (err) {
+      console.log(`[YouTube API] Invidious ${base} failed: ${(err as Error).message}`);
+    }
+  }
+
+  console.error(`[YouTube API] ✗ All extraction methods failed for ${videoId}`);
+  console.error('[YouTube API] Errors:', errors);
+  return res.status(502).json({
+    error: 'Could not extract audio for this video.\n\nPossible reasons:\n• Video is region-restricted or private\n• All proxy servers are temporarily unavailable\n• Video has unusual encoding\n\nTry another video or wait a moment and try again
   }
 
   return res.status(502).json({
