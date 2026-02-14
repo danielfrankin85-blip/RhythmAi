@@ -13,6 +13,7 @@ import { MultiplayerResults } from './Game/MultiplayerResults';
 import { MultiplayerManager, type SongInfo, type PlayerScore, type LobbyState } from '../multiplayer/MultiplayerManager';
 import '../styles/global.css';
 import '../styles/components.css';
+import MusicPlayer from '../audio/MusicPlayer';
 
 type AppState = 'menu' | 'loading' | 'playing' | 'game-over' | 'mp-lobby' | 'mp-waiting';
 
@@ -123,6 +124,7 @@ export function App() {
   const mpSongFileRef = useRef<File | null>(null);
   const mpDifficultyRef = useRef<Difficulty>('medium');
   const appStateRef = useRef<AppState>(appState);
+  const musicRef = useRef<MusicPlayer | null>(null);
   const handleStartGameRef = useRef<((file: File, difficulty: Difficulty, songId: string, songName: string) => void) | null>(null);
 
   useEffect(() => {
@@ -132,6 +134,20 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('songRunHistory', JSON.stringify(songRunHistory));
   }, [songRunHistory]);
+
+  // Start menu music when in menu, stop when playing
+  useEffect(() => {
+    if (!musicRef.current) musicRef.current = new MusicPlayer();
+    const music = musicRef.current;
+    music.setVolume(musicVolume);
+    if (appState === 'menu') {
+      // Resume audio context on user gesture if suspended
+      try { music.start(); } catch (e) { /* ignore */ }
+    } else {
+      music.stop();
+    }
+    return () => { /* don't auto-stop here */ };
+  }, [appState, musicVolume]);
 
   // ── Helper: attach event listeners to a game engine ────────────────────
   const attachListeners = useCallback((engine: GameEngine) => {
