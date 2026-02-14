@@ -363,11 +363,117 @@ export class MultiplayerManager {
 
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      let attempt = 0;
+      let attemptToken = 0;
+      let stateCheckInterval: ReturnType<typeof setInterval> | null = null;
+      let openTimeout: ReturnType<typeof setTimeout> | null = null;
+      const MAX_JOIN_ATTEMPTS = 3;
+      const OPEN_TIMEOUT_MS = 12000;
+
+      const clearAttemptTimers = () => {
+        if (stateCheckInterval) {
+          clearInterval(stateCheckInterval);
+          stateCheckInterval = null;
+        }
+        if (openTimeout) {
+          clearTimeout(openTimeout);
+          openTimeout = null;
+        }
+      };
+
+      const failJoin = (message: string, err?: Error) => {
+        if (this.joinRoomReject) {
+          this.emit({ kind: 'error', message });
+          this.joinRoomReject(err ?? new Error(message));
+        }
+      };
+
+      const retryOrFail = (reason: string, fallbackMessage: string) => {
+        if (settled) return;
+        console.warn(`[MP] joinRoom: Attempt ${attempt}/${MAX_JOIN_ATTEMPTS} failed: ${reason}`);
+        clearAttemptTimers();
+        this.conn?.close();
+        this.conn = null;
+
+        if (attempt < MAX_JOIN_ATTEMPTS) {
+          startAttempt();
+          return;
+        }
+
+        failJoin(fallbackMessage, new Error(reason));
+      };
+
+      const startAttempt = () => {
+        if (settled || !this.peer) return;
+
+        attempt += 1;
+        const token = ++attemptToken;
+        const hostId = PEER_PREFIX + this.roomCode;
+
+        console.log(`[MP] joinRoom: Attempt ${attempt}/${MAX_JOIN_ATTEMPTS} connecting to host ID:`, hostId);
+
+        this.conn?.close();
+        this.conn = this.peer.connect(hostId, { serialization: 'json' });
+
+        console.log('[MP] joinRoom: Connection object created, initial state:', {
+          open: this.conn.open,
+          peer: this.conn.peer,
+          type: this.conn.type,
+          metadata: this.conn.metadata,
+        });
+
+        monitorICE(this.conn, `GUEST[attempt-${attempt}]`);
+
+        this.conn.on('open', () => {
+          if (settled || token !== attemptToken) return;
+          clearAttemptTimers();
+          console.log('[MP] joinRoom: Connection channel opened, waiting for ping from host');
+
+          this.setupDataChannel();
+          console.log('[MP] joinRoom: Data channel set up, starting 10s handshake timeout');
+
+          this.joinRoomTimeout = setTimeout(() => {
+            if (settled || token !== attemptToken) return;
+            console.error('[MP] joinRoom: Handshake timeout - no ping received from host');
+            retryOrFail('Handshake timeout', 'Handshake timed out. Host did not respond.');
+          }, 10000);
+        });
+
+        this.conn.on('error', (err) => {
+          if (settled || token !== attemptToken) return;
+          console.error('[MP] joinRoom: Connection error:', err);
+          retryOrFail(err.message || 'Connection error', `Failed to connect: ${err.message}`);
+        });
+
+        this.conn.on('close', () => {
+          if (settled || token !== attemptToken) return;
+          console.warn('[MP] joinRoom: Connection closed before handshake completed');
+          retryOrFail('Connection closed early', 'Connection closed before it could open. Check the room code.');
+        });
+
+        stateCheckInterval = setInterval(() => {
+          if (this.conn && token === attemptToken) {
+            console.log('[MP] joinRoom: Connection state check - open:', this.conn.open, 'peer:', this.conn.peer);
+          }
+        }, 2000);
+
+        openTimeout = setTimeout(() => {
+          if (settled || token !== attemptToken) return;
+          console.error(`[MP] joinRoom: Attempt ${attempt} open-timeout (${OPEN_TIMEOUT_MS}ms)`);
+          console.error('[MP] joinRoom: Final connection state:', this.conn ? {
+            open: this.conn.open,
+            peer: this.conn.peer,
+            type: this.conn.type,
+          } : 'null');
+          retryOrFail('Connection open timeout', 'Connection timed out. The host may be offline, unreachable, or behind strict NAT.');
+        }, OPEN_TIMEOUT_MS);
+      };
 
       // Store callbacks for handshake completion
       this.joinRoomResolve = () => {
         if (settled) return;
         settled = true;
+        clearAttemptTimers();
         if (this.joinRoomTimeout) {
           clearTimeout(this.joinRoomTimeout);
           this.joinRoomTimeout = null;
@@ -380,6 +486,7 @@ export class MultiplayerManager {
       this.joinRoomReject = (err: Error) => {
         if (settled) return;
         settled = true;
+        clearAttemptTimers();
         if (this.joinRoomTimeout) {
           clearTimeout(this.joinRoomTimeout);
           this.joinRoomTimeout = null;
@@ -394,76 +501,7 @@ export class MultiplayerManager {
       this.peer.on('open', () => {
         console.log('[MP] joinRoom: Guest peer opened with ID:', this.peer!.id);
         console.log('[MP] joinRoom: Peer status - disconnected:', this.peer!.disconnected, 'destroyed:', this.peer!.destroyed);
-        const hostId = PEER_PREFIX + this.roomCode;
-        console.log('[MP] joinRoom: Attempting to connect to host ID:', hostId);
-        this.conn = this.peer!.connect(hostId, { reliable: true, serialization: 'json' });
-        console.log('[MP] joinRoom: Connection object created, initial state:', {
-          open: this.conn.open,
-          peer: this.conn.peer,
-          type: this.conn.type,
-          metadata: this.conn.metadata
-        });
-
-        // Monitor ICE connection state on guest side
-        monitorICE(this.conn, 'GUEST');
-
-        this.conn.on('open', () => {
-          console.log('[MP] joinRoom: Connection channel opened, waiting for ping from host');
-          if (settled) return;
-          // Channel is open - set up data handlers but DON'T resolve yet
-          // Wait for ping from host to confirm bidirectional handshake
-          this.setupDataChannel();
-          console.log('[MP] joinRoom: Data channel set up, starting 10s handshake timeout');
-          
-          // Start timeout waiting for ping
-          this.joinRoomTimeout = setTimeout(() => {
-            console.error('[MP] joinRoom: Handshake timeout - no ping received from host');
-            if (this.joinRoomReject) {
-              this.emit({ kind: 'error', message: 'Handshake timeout. Host did not respond.' });
-              this.joinRoomReject(new Error('Handshake timeout'));
-            }
-          }, 10000);
-        });
-
-        this.conn.on('error', (err) => {
-          console.error('[MP] joinRoom: Connection error:', err);
-          if (this.joinRoomReject) {
-            this.emit({ kind: 'error', message: `Failed to connect: ${err.message}` });
-            this.joinRoomReject(err);
-          }
-        });
-
-        this.conn.on('close', () => {
-          console.error('[MP] joinRoom: Connection closed before handshake completed');
-          if (this.joinRoomReject) {
-            this.emit({ kind: 'error', message: 'Connection closed before it could open. Check the room code.' });
-            this.joinRoomReject(new Error('Connection closed early'));
-          }
-        });
-
-        // Check connection state periodically
-        const stateCheckInterval = setInterval(() => {
-          if (this.conn) {
-            console.log('[MP] joinRoom: Connection state check - open:', this.conn.open, 'peer:', this.conn.peer);
-          }
-        }, 2000);
-
-        // Timeout if connection doesn't open at all
-        setTimeout(() => {
-          clearInterval(stateCheckInterval);
-          if (this.joinRoomReject) {
-            console.error('[MP] joinRoom: Overall connection timeout (30s) - connection never opened');
-            console.error('[MP] joinRoom: Final connection state:', this.conn ? {
-              open: this.conn.open,
-              peer: this.conn.peer,
-              type: this.conn.type
-            } : 'null');
-            this.conn?.close();
-            this.conn = null;
-            this.emit({ kind: 'error', message: 'Connection timed out. The host may be offline or the room code is invalid.' });
-            this.joinRoomReject(new Error('Connection timeout'));
-          }
-        }, 30000);
+        startAttempt();
       });
 
       this.peer.on('error', (err) => {
@@ -486,9 +524,7 @@ export class MultiplayerManager {
       // Peer itself may fail to reach signaling server
       setTimeout(() => {
         if (!settled) {
-          settled = true;
-          this.emit({ kind: 'error', message: 'Could not reach the multiplayer server. Check your internet connection.' });
-          reject(new Error('Signaling server timeout'));
+          failJoin('Could not reach the multiplayer server. Check your internet connection.', new Error('Signaling server timeout'));
         }
       }, 20000);
     });
