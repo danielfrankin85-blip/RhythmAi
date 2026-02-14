@@ -21,6 +21,8 @@ interface SettingsProps {
   onSfxVolumeChange: (volume: number) => void;
   perfectHitSound: PerfectHitSound;
   onPerfectHitSoundChange: (sound: PerfectHitSound) => void;
+  missDipEnabled: boolean;
+  onMissDipEnabledChange: (enabled: boolean) => void;
   onClose: () => void;
 }
 
@@ -32,7 +34,7 @@ interface SettingsProps {
  * - 100 FPS: Balanced performance and precision (recommended)
  * - 144 FPS: Maximum precision for high-refresh displays
  */
-export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, perfectHitSound, onPerfectHitSoundChange, onClose }) => {
+export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange, keyBindings, onKeyBindingsChange, musicVolume, onMusicVolumeChange, sfxVolume, onSfxVolumeChange, perfectHitSound, onPerfectHitSoundChange, missDipEnabled, onMissDipEnabledChange, onClose }) => {
   const [editingLane, setEditingLane] = useState<number | null>(null);
   
   const fpsOptions = [
@@ -167,6 +169,20 @@ export const Settings: React.FC<SettingsProps> = memo(({ currentFPS, onFPSChange
                 ))}
               </select>
               <div className="settings__audio-value" />
+            </div>
+
+            <div className="settings__audio-row">
+              <div className="settings__audio-label">Miss Volume Dip</div>
+              <label className="settings__audio-toggle-label">
+                <input
+                  className="settings__audio-checkbox"
+                  type="checkbox"
+                  checked={missDipEnabled}
+                  onChange={(e) => onMissDipEnabledChange(e.target.checked)}
+                />
+                <span>{missDipEnabled ? 'Enabled' : 'Disabled'}</span>
+              </label>
+              <div className="settings__audio-value">{missDipEnabled ? 'On' : 'Off'}</div>
             </div>
           </div>
         </div>

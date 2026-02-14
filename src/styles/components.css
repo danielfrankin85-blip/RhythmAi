@@ -1542,6 +1542,18 @@
   font-size: var(--font-size-sm);
 }
 
+.settings__audio-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.settings__audio-checkbox {
+  accent-color: var(--color-info);
+}
+
 .settings__audio-value {
   text-align: right;
   color: var(--color-text-secondary);

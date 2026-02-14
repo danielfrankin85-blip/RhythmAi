@@ -111,6 +111,8 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   private perfectHitSound: PerfectHitSound = 'bass';
   /** Volume dip timeout handle for miss effect. */
   private missDipTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** Whether miss volume dip feedback is enabled. */
+  private missDipEnabled = true;
   /** Original music volume to restore after miss dip. */
   private originalMusicVolume = 0.7;
 
@@ -189,6 +191,20 @@ export class GameEngine extends EventEmitter<GameEventMap> {
 
   getMusicVolume(): number {
     return this.originalMusicVolume;
+  }
+
+  setMissDipEnabled(enabled: boolean): void {
+    this.missDipEnabled = enabled;
+
+    if (!enabled && this.missDipTimeout) {
+      clearTimeout(this.missDipTimeout);
+      this.missDipTimeout = null;
+      this.audioEngine.setVolume(this.originalMusicVolume);
+    }
+  }
+
+  getMissDipEnabled(): boolean {
+    return this.missDipEnabled;
   }
 
   /** Update hit/perfect SFX volume (0..1). */
@@ -1000,6 +1016,8 @@ export class GameEngine extends EventEmitter<GameEventMap> {
    * Drops to ~30% for 200ms then restores.
    */
   private triggerMissDip(): void {
+    if (!this.missDipEnabled) return;
+
     const dippedVolume = this.originalMusicVolume * 0.3;
 
     // Cancel any pending restoration from a previous miss

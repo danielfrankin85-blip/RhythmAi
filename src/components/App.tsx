@@ -66,6 +66,10 @@ export function App() {
     }
     return 'bass';
   });
+  const [missDipEnabled, setMissDipEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('missDipEnabled');
+    return saved === null ? true : saved === 'true';
+  });
   const [keyBindings, setKeyBindings] = useState<string[]>(() => {
     const saved = localStorage.getItem('keyBindings');
     return saved ? JSON.parse(saved) : ['d', 'f', 'j', 'k'];
@@ -360,6 +364,7 @@ export function App() {
       gameEngine.setMusicVolume(musicVolume);
       gameEngine.setSfxVolume(sfxVolume);
       gameEngine.setPerfectHitSound(perfectHitSound);
+      gameEngine.setMissDipEnabled(missDipEnabled);
 
       // Load beatmap
       gameEngine.loadBeatmap(beatmap.notes);
@@ -393,7 +398,7 @@ export function App() {
     } finally {
       setIsLoadingBeatmap(false);
     }
-  }, [createGameEngine, musicVolume, perfectHitSound, sfxVolume, startUIUpdates]);
+  }, [createGameEngine, missDipEnabled, musicVolume, perfectHitSound, sfxVolume, startUIUpdates]);
 
   // ── Restart ────────────────────────────────────────────────────────────
   const handleRestart = useCallback(async () => {
@@ -418,6 +423,7 @@ export function App() {
       gameEngine.setMusicVolume(musicVolume);
       gameEngine.setSfxVolume(sfxVolume);
       gameEngine.setPerfectHitSound(perfectHitSound);
+      gameEngine.setMissDipEnabled(missDipEnabled);
 
       // Load beatmap
       gameEngine.loadBeatmap(current.beatmap.notes);
@@ -444,7 +450,7 @@ export function App() {
       console.error('Failed to restart:', err);
       setAppState('menu');
     }
-  }, [createGameEngine, musicVolume, perfectHitSound, sfxVolume, startUIUpdates]);
+  }, [createGameEngine, missDipEnabled, musicVolume, perfectHitSound, sfxVolume, startUIUpdates]);
 
   // ── Main Menu ──────────────────────────────────────────────────────────
   const handleMainMenu = useCallback(() => {
@@ -489,6 +495,12 @@ export function App() {
     setPerfectHitSound(sound);
     localStorage.setItem('perfectHitSound', sound);
     gameEngineRef.current?.setPerfectHitSound(sound);
+  }, []);
+
+  const handleMissDipEnabledChange = useCallback((enabled: boolean) => {
+    setMissDipEnabled(enabled);
+    localStorage.setItem('missDipEnabled', String(enabled));
+    gameEngineRef.current?.setMissDipEnabled(enabled);
   }, []);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
@@ -775,6 +787,8 @@ export function App() {
           onSfxVolumeChange={handleSfxVolumeChange}
           perfectHitSound={perfectHitSound}
           onPerfectHitSoundChange={handlePerfectHitSoundChange}
+          missDipEnabled={missDipEnabled}
+          onMissDipEnabledChange={handleMissDipEnabledChange}
           onClose={handleCloseSettings}
         />
       )}
