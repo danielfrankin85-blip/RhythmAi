@@ -174,6 +174,7 @@ export class MultiplayerManager {
   private joinRoomResolve: (() => void) | null = null;
   private joinRoomReject: ((error: Error) => void) | null = null;
   private joinRoomTimeout: ReturnType<typeof setTimeout> | null = null;
+  private signalingReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Public getters ─────────────────────────────────────────────────────
 
@@ -261,6 +262,10 @@ export class MultiplayerManager {
 
       this.peer.on('disconnected', () => {
         console.warn('[MP] createRoom: Host peer disconnected from signaling server');
+        if (this.role === 'host') {
+          this.emit({ kind: 'error', message: 'Multiplayer server link dropped. Reconnecting…' });
+          this.schedulePeerReconnect();
+        }
       });
 
       this.peer.on('close', () => {
@@ -276,6 +281,20 @@ export class MultiplayerManager {
         }
       }, 15000);
     });
+  }
+
+  private schedulePeerReconnect(): void {
+    if (!this.peer || this.peer.destroyed || this.signalingReconnectTimer) return;
+    this.signalingReconnectTimer = setTimeout(() => {
+      this.signalingReconnectTimer = null;
+      if (!this.peer || this.peer.destroyed) return;
+      try {
+        console.log('[MP] schedulePeerReconnect: Attempting peer.reconnect()');
+        this.peer.reconnect();
+      } catch (err) {
+        console.error('[MP] schedulePeerReconnect: Reconnect failed:', (err as Error).message);
+      }
+    }, 800);
   }
 
   private setupHostListeners(): void {
@@ -433,7 +452,7 @@ export class MultiplayerManager {
         setTimeout(() => {
           clearInterval(stateCheckInterval);
           if (this.joinRoomReject) {
-            console.error('[MP] joinRoom: Overall connection timeout (15s) - connection never opened');
+            console.error('[MP] joinRoom: Overall connection timeout (30s) - connection never opened');
             console.error('[MP] joinRoom: Final connection state:', this.conn ? {
               open: this.conn.open,
               peer: this.conn.peer,
@@ -444,7 +463,7 @@ export class MultiplayerManager {
             this.emit({ kind: 'error', message: 'Connection timed out. The host may be offline or the room code is invalid.' });
             this.joinRoomReject(new Error('Connection timeout'));
           }
-        }, 15000);
+        }, 30000);
       });
 
       this.peer.on('error', (err) => {
@@ -457,6 +476,7 @@ export class MultiplayerManager {
 
       this.peer.on('disconnected', () => {
         console.warn('[MP] joinRoom: Peer disconnected from signaling server');
+        this.schedulePeerReconnect();
       });
 
       this.peer.on('close', () => {
@@ -646,6 +666,10 @@ export class MultiplayerManager {
     if (this.joinRoomTimeout) {
       clearTimeout(this.joinRoomTimeout);
       this.joinRoomTimeout = null;
+    }
+    if (this.signalingReconnectTimer) {
+      clearTimeout(this.signalingReconnectTimer);
+      this.signalingReconnectTimer = null;
     }
     this.joinRoomResolve = null;
     this.joinRoomReject = null;
