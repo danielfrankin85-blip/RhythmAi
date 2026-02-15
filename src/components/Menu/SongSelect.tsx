@@ -1,12 +1,19 @@
 import { memo, useCallback, useMemo, useState, type ChangeEvent } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
-import { BeatmapOptionsPanel } from './selection/BeatmapOptionsPanel';
-import { DifficultyPanel } from './selection/DifficultyPanel';
-import { SongListPanel } from './selection/SongListPanel';
-import { TopNavTabs } from './selection/TopNavTabs';
-import type { NavigationTab, SongOption } from './selection/types';
 
-const BUILT_IN_SONGS: SongOption[] = [
+/* ── Song source tab type ─────────────────────────────────────────────── */
+type SongTab = 'builtin' | 'personal' | 'rhythm-ai' | 'youtube' | 'yt-mp3';
+
+interface SongEntry {
+  id: string;
+  name: string;
+  source: SongTab;
+  path?: string;
+  file?: File;
+}
+
+/* ── Song data ────────────────────────────────────────────────────────── */
+const BUILT_IN_SONGS: SongEntry[] = [
   { id: 'b1', name: 'Central Cee - Booga', source: 'builtin', path: '/music/Central_Cee_-_Booga_(Lyrics)_320k.mp3' },
   { id: 'b2', name: 'Don Toliver - FWU', source: 'builtin', path: '/music/Don_Toliver_-_FWU_(AUDIO)_320k.mp3' },
   { id: 'b3', name: 'Lil Uzi Vert - What You Saying', source: 'builtin', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
@@ -15,39 +22,58 @@ const BUILT_IN_SONGS: SongOption[] = [
   { id: 'b6', name: 'The Weeknd, Playboi Carti - Timeless', source: 'builtin', path: '/music/The_Weeknd%2C_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
 ];
 
-const RHYTHM_AI_SONGS: SongOption[] = [
+const RHYTHM_AI_SONGS: SongEntry[] = [
   { id: 'ai-1', name: 'Rhythm AI Suggestion: Neon Pulse', source: 'rhythm-ai' },
   { id: 'ai-2', name: 'Rhythm AI Suggestion: Skyline Drive', source: 'rhythm-ai' },
   { id: 'ai-3', name: 'Rhythm AI Suggestion: Night Circuit', source: 'rhythm-ai' },
 ];
 
-const YOUTUBE_SONGS: SongOption[] = [
+const YOUTUBE_SONGS: SongEntry[] = [
   { id: 'yt-1', name: 'YouTube Import Placeholder #1', source: 'youtube' },
   { id: 'yt-2', name: 'YouTube Import Placeholder #2', source: 'youtube' },
 ];
 
-const YT_MP3_SONGS: SongOption[] = [
+const YT_MP3_SONGS: SongEntry[] = [
   { id: 'ytmp3-1', name: 'YouTube to MP3 Placeholder #1', source: 'yt-mp3' },
   { id: 'ytmp3-2', name: 'YouTube to MP3 Placeholder #2', source: 'yt-mp3' },
 ];
 
+const TAB_OPTIONS: { id: SongTab; label: string }[] = [
+  { id: 'builtin', label: 'Built In' },
+  { id: 'personal', label: 'Personal' },
+  { id: 'rhythm-ai', label: 'Rhythm AI' },
+  { id: 'youtube', label: 'YouTube' },
+  { id: 'yt-mp3', label: 'YouTube to MP3' },
+];
+
+const DIFFICULTIES: { value: Difficulty; label: string }[] = [
+  { value: 'easy', label: 'Easy' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'hard', label: 'Hard' },
+  { value: 'extreme', label: 'Extreme' },
+  { value: 'deadly', label: 'Deadly' },
+];
+
+/* ── Props ────────────────────────────────────────────────────────────── */
 interface SongSelectProps {
   onStartGame: (file: File, difficulty: Difficulty, songId: string, songName: string) => void;
   isLoading: boolean;
   bestRecords: Record<string, { bestScore: number; bestAccuracy: number }>;
+  onOpenSettings?: () => void;
 }
 
 function fileNameToTitle(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
 }
 
-export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords }) => {
-  const [activeTab, setActiveTab] = useState<NavigationTab>('builtin');
+/* ── Component ────────────────────────────────────────────────────────── */
+export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords, onOpenSettings }) => {
+  const [activeTab, setActiveTab] = useState<SongTab>('builtin');
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty | null>(null);
-  const [personalSongs, setPersonalSongs] = useState<SongOption[]>([]);
-  const [uiMessage, setUiMessage] = useState<string>('Select a song and difficulty to unlock beatmap options.');
+  const [personalSongs, setPersonalSongs] = useState<SongEntry[]>([]);
 
+  /* Derived */
   const songs = useMemo(() => {
     if (activeTab === 'builtin') return BUILT_IN_SONGS;
     if (activeTab === 'personal') return personalSongs;
@@ -56,44 +82,32 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
     return YT_MP3_SONGS;
   }, [activeTab, personalSongs]);
 
-  const selectedSong = useMemo(() => songs.find((song) => song.id === selectedSongId) ?? null, [songs, selectedSongId]);
-  const canOpenBeatmapOptions = Boolean(selectedSong && selectedDifficulty);
+  const selectedSong = useMemo(() => songs.find((s) => s.id === selectedSongId) ?? null, [songs, selectedSongId]);
+  const canStart = Boolean(selectedSong && selectedDifficulty);
 
-  const handleTabChange = useCallback((tab: NavigationTab) => {
+  /* Handlers */
+  const handleTabChange = useCallback((tab: SongTab) => {
     setActiveTab(tab);
     setSelectedSongId(null);
-    setUiMessage('Select a song and difficulty to unlock beatmap options.');
   }, []);
 
   const handleUploadFiles = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []).filter((file) => file.type.startsWith('audio/'));
+    const files = Array.from(event.target.files ?? []).filter((f) => f.type.startsWith('audio/'));
+    if (!files.length) return;
 
-    if (!files.length) {
-      setUiMessage('No supported audio files were selected.');
-      return;
-    }
-
-    const mapped = files.map((file) => ({
-      id: `personal-${Date.now()}-${file.name}`,
-      name: fileNameToTitle(file.name),
+    const mapped: SongEntry[] = files.map((f) => ({
+      id: `personal-${Date.now()}-${f.name}`,
+      name: fileNameToTitle(f.name),
       source: 'personal' as const,
-      file,
+      file: f,
     }));
 
     setPersonalSongs((prev) => [...mapped, ...prev]);
     setActiveTab('personal');
     setSelectedSongId(mapped[0].id);
-    setUiMessage(`${mapped.length} personal song(s) added.`);
-
     event.currentTarget.value = '';
   }, []);
 
-  const handleCreateBeatmap = useCallback(() => {
-    if (!canOpenBeatmapOptions || !selectedSong || !selectedDifficulty) return;
-    setUiMessage(`Beatmap options ready for ${selectedSong.name} (${selectedDifficulty}).`);
-  }, [canOpenBeatmapOptions, selectedDifficulty, selectedSong]);
-
-  // Keep existing game flow available from this UI when audio is playable.
   const handleStartGame = useCallback(async () => {
     if (!selectedSong || !selectedDifficulty) return;
 
@@ -104,81 +118,150 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
 
     if (selectedSong.path) {
       const response = await fetch(selectedSong.path);
-      if (!response.ok) {
-        setUiMessage(`Could not load ${selectedSong.name}.`);
-        return;
-      }
+      if (!response.ok) return;
       const blob = await response.blob();
       const file = new File([blob], selectedSong.path.split('/').pop() ?? 'song.mp3', { type: blob.type || 'audio/mpeg' });
       onStartGame(file, selectedDifficulty, selectedSong.id, selectedSong.name);
-      return;
     }
-
-    setUiMessage('This tab is UI-only for now. Pick a Built In or Personal song to continue.');
   }, [onStartGame, selectedDifficulty, selectedSong]);
 
+  /* ── Render ────────────────────────────────────────────────────────── */
   return (
-    <div className="rounded-2xl border border-game-border bg-game-surface p-4 md:p-6">
-      <header className="mb-4 space-y-2">
-        <h1 className="text-2xl font-bold">Rhythm Game Selection</h1>
-        <p className="text-sm text-game-muted">Use keyboard arrows in tabs, song list, and difficulty list for fast navigation.</p>
-      </header>
+    <div className="flex min-h-screen w-full flex-col bg-game-bg px-6 py-6 md:px-10 lg:px-16">
 
-      <TopNavTabs activeTab={activeTab} onTabChange={handleTabChange} />
+      {/* ── Top bar: site name + tabs + settings ── */}
+      <nav className="mb-10 flex flex-wrap items-center gap-4">
+        <h1 className="mr-6 text-xl font-bold tracking-tight text-white">Rhythm&nbsp;Game</h1>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_300px]">
-        <div id={`tab-panel-${activeTab}`} role="tabpanel" aria-labelledby={`tab-${activeTab}`} className="space-y-4">
-          <div className="rounded-xl border border-dashed border-game-border bg-game-panel p-3">
-            <label htmlFor="personal-upload" className="block text-sm text-game-text">
-              Upload audio files (Personal tab)
-            </label>
+        {TAB_OPTIONS.map((tab) => {
+          const isActive = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => handleTabChange(tab.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                isActive
+                  ? 'bg-white text-black'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+
+        <div className="ml-auto flex items-center gap-3">
+          {/* Upload (always visible) */}
+          <label
+            htmlFor="personal-upload"
+            className="cursor-pointer rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-300 transition hover:border-white hover:text-white"
+          >
+            ＋ Upload
             <input
               id="personal-upload"
               type="file"
               accept="audio/*"
               multiple
               onChange={handleUploadFiles}
-              className="mt-2 w-full cursor-pointer rounded-md border border-game-border bg-game-surface p-2 text-sm text-game-text file:mr-3 file:rounded file:border-0 file:bg-game-accent file:px-3 file:py-1 file:text-sm file:font-medium file:text-slate-900 hover:file:bg-game-accentStrong"
+              className="hidden"
               aria-label="Upload personal songs"
             />
-          </div>
+          </label>
 
-          <SongListPanel
-            songs={songs}
-            selectedSongId={selectedSongId}
-            onSongSelect={(song) => setSelectedSongId(song.id)}
-            panelId={`song-panel-${activeTab}`}
-            emptyMessage="No songs in this tab yet."
-            bestRecords={bestRecords}
-          />
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-300 transition hover:border-white hover:text-white"
+            >
+              ⚙️ Settings
+            </button>
+          )}
         </div>
+      </nav>
 
-        <div className="space-y-4">
-          <DifficultyPanel selectedDifficulty={selectedDifficulty} onDifficultySelect={setSelectedDifficulty} />
+      {/* ── Main area: songs LEFT ↔ difficulty RIGHT ── */}
+      <div className="flex flex-1 gap-10 lg:gap-20">
 
-          <BeatmapOptionsPanel
-            enabled={canOpenBeatmapOptions}
-            isLoading={isLoading}
-            songName={selectedSong?.name ?? ''}
-            difficultyName={selectedDifficulty ?? ''}
-            onCreateBeatmap={handleCreateBeatmap}
-          />
+        {/* ── LEFT: Song list ── */}
+        <section className="flex-1">
+          <h2 className="mb-5 text-lg font-semibold text-white">Songs</h2>
+
+          <div className="flex flex-wrap gap-4">
+            {songs.length === 0 && (
+              <p className="text-sm text-gray-500">No songs in this tab yet.</p>
+            )}
+
+            {songs.map((song) => {
+              const isSelected = song.id === selectedSongId;
+              const record = bestRecords[song.id];
+
+              return (
+                <button
+                  key={song.id}
+                  onClick={() => setSelectedSongId(song.id)}
+                  className={`
+                    song-card
+                    group relative rounded-xl border-2 bg-white px-5 py-4
+                    text-left text-black shadow-sm
+                    transition-all duration-200 ease-out
+                    hover:-translate-y-1 hover:shadow-md
+                    focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-game-bg
+                    ${isSelected
+                      ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.35)]'
+                      : 'border-black/80 hover:border-black'}
+                  `}
+                  aria-pressed={isSelected}
+                >
+                  <span className="block text-sm font-semibold leading-snug">{song.name}</span>
+                  {record && (
+                    <span className="mt-1 block text-xs text-gray-500">
+                      Best: {record.bestScore.toLocaleString()} · {record.bestAccuracy.toFixed(2)}%
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ── RIGHT: Difficulty + Start ── */}
+        <aside className="w-52 shrink-0">
+          <h2 className="mb-5 text-lg font-semibold text-white">Difficulty</h2>
+
+          <div className="flex flex-col gap-3">
+            {DIFFICULTIES.map((d) => {
+              const isActive = d.value === selectedDifficulty;
+              return (
+                <button
+                  key={d.value}
+                  onClick={() => setSelectedDifficulty(d.value)}
+                  className={`
+                    rounded-xl border-2 px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider
+                    transition-all duration-200 ease-out
+                    hover:-translate-y-0.5 hover:shadow-md
+                    ${isActive
+                      ? 'border-sky-400 bg-white text-black shadow-[0_0_12px_rgba(56,189,248,0.35)]'
+                      : 'border-gray-600 bg-game-panel text-gray-300 hover:border-white hover:text-white'}
+                  `}
+                  aria-pressed={isActive}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
 
           <button
             type="button"
-            disabled={!canOpenBeatmapOptions || isLoading}
+            disabled={!canStart || isLoading}
             onClick={handleStartGame}
-            className="w-full rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-8 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Start game with selected song and difficulty"
           >
-            {isLoading ? 'Analyzing...' : 'Start Game'}
+            {isLoading ? 'Analyzing…' : 'Start Game'}
           </button>
-        </div>
+        </aside>
       </div>
-
-      <p className="mt-4 rounded-md border border-game-border bg-game-panel px-3 py-2 text-sm text-game-muted" aria-live="polite">
-        {uiMessage}
-      </p>
     </div>
   );
 });

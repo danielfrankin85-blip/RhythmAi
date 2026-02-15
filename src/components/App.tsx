@@ -443,20 +443,12 @@ export function App() {
       </div>
 
       {appState === 'menu' && (
-        <div className="menu">
-          <div className="menu__header">
-            <h1 className="menu__title">Rhythm Game</h1>
-            <p className="menu__subtitle">Play your music, test your skills</p>
-          </div>
-          <div className="menu__content">
-            <SongSelect onStartGame={handleStartGame} isLoading={isLoadingBeatmap} bestRecords={songBestRecords} />
-          </div>
-          <div className="menu__footer">
-            <button className="btn menu__settings-btn" onClick={handleOpenSettings}>
-              ⚙️ Settings
-            </button>
-          </div>
-        </div>
+        <SongSelect
+          onStartGame={handleStartGame}
+          isLoading={isLoadingBeatmap}
+          bestRecords={songBestRecords}
+          onOpenSettings={handleOpenSettings}
+        />
       )}
 
       {appState === 'loading' && (
