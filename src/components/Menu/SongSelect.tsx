@@ -13,38 +13,6 @@ interface YTStreamResult {
   duration: number; // seconds
 }
 
-function extractYouTubeVideoIdFromUrl(input: string): string | null {
-  const raw = input.trim();
-  if (!raw) return null;
-
-  // Accept plain 11-char IDs as convenience
-  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
-
-  try {
-    const url = new URL(raw);
-
-    if (url.hostname.includes('youtu.be')) {
-      const id = url.pathname.split('/').filter(Boolean)[0] ?? '';
-      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-    }
-
-    if (url.hostname.includes('youtube.com')) {
-      const v = url.searchParams.get('v');
-      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
-
-      const segments = url.pathname.split('/').filter(Boolean);
-      const marker = segments.findIndex((segment) => segment === 'shorts' || segment === 'embed');
-      if (marker >= 0 && segments[marker + 1] && /^[A-Za-z0-9_-]{11}$/.test(segments[marker + 1])) {
-        return segments[marker + 1];
-      }
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
 async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
   const fetchFromProxy = async (): Promise<YTStreamResult> => {
     const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
@@ -278,13 +246,6 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [ytActiveId, setYtActiveId] = useState<string | null>(null);
   const [ytApiKey, setYtApiKey] = useState<string>(() => localStorage.getItem('ytApiKey') ?? '');
 
-  // YT to MP3 state
-  const [linkInput, setLinkInput] = useState('');
-  const [linkStatus, setLinkStatus] = useState<'idle' | 'resolving' | 'downloading' | 'error'>('idle');
-  const [linkError, setLinkError] = useState<string | null>(null);
-  const [linkTitle, setLinkTitle] = useState<string | null>(null);
-  const [linkNote, setLinkNote] = useState<string | null>(null);
-
   // Load persisted custom songs from IndexedDB on mount
   useEffect(() => {
     getAllStoredSongs()
@@ -433,50 +394,6 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       setYtActiveId(null);
     }
   }, [ytApiKey]);
-
-  // ── YT to MP3 convert handler ────────────────────────────────────────
-  const handleConvertLink = useCallback(async () => {
-    const raw = linkInput.trim();
-    if (!raw) return;
-
-    try {
-      setLinkStatus('resolving');
-      setLinkError(null);
-      setLinkTitle(null);
-      setLinkNote(null);
-
-      const videoId = extractYouTubeVideoIdFromUrl(raw);
-      if (!videoId) {
-        throw new Error('Please paste a valid YouTube link (youtube.com or youtu.be).');
-      }
-
-      const result = await fetchYouTubeAudio(videoId, ytApiKey);
-      setLinkTitle(result.title);
-      setLinkNote('Downloaded from YouTube link.');
-      setLinkStatus('downloading');
-
-      const blob = await downloadYouTubeBlob(result.audioUrl);
-      const song: StoredSong = {
-        id: `link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: result.title,
-        blob,
-        addedAt: Date.now(),
-        size: blob.size,
-      };
-
-      await storeSong(song);
-      setCustomSongs((prev) => [song, ...prev]);
-      setSelectedSong({ type: 'custom', id: song.id, name: song.name, blob: song.blob, size: song.size });
-      setTab('custom');
-      setLinkStatus('idle');
-      setLinkTitle(null);
-      setLinkNote(null);
-      setLinkInput('');
-    } catch (err) {
-      setLinkError((err as Error).message);
-      setLinkStatus('error');
-    }
-  }, [linkInput, ytApiKey]);
 
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -723,52 +640,32 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
             <div>
               <div className="yt-section__title">YT to MP3</div>
               <div className="yt-section__subtitle">
-                Paste a YouTube link and auto-download the audio so you can play it in-game.
+                Use this site to convert your YouTube video to MP3 320kbps, then upload it here.
               </div>
             </div>
           </div>
 
-          <div className="yt-section__input-row">
-            <input
-              type="text"
-              className="yt-section__input"
-              placeholder="Paste YouTube link..."
-              value={linkInput}
-              onChange={(e) => { setLinkInput(e.target.value); setLinkError(null); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && linkInput.trim() && linkStatus !== 'resolving' && linkStatus !== 'downloading') {
-                  handleConvertLink();
-                }
-              }}
-              disabled={linkStatus === 'resolving' || linkStatus === 'downloading'}
-            />
-            <button
-              className="yt-section__btn"
-              onClick={handleConvertLink}
-              disabled={!linkInput.trim() || linkStatus === 'resolving' || linkStatus === 'downloading'}
+          <div className="yt-section__tips">
+            <a
+              href="https://cnvmp3.com/v51"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="yt-section__api-key-link"
             >
-              {linkStatus === 'resolving'
-                ? 'Converting...'
-                : linkStatus === 'downloading'
-                  ? 'Downloading...'
-                  : 'Convert & Download'}
-            </button>
+              Open cnvmp3.com/v51 →
+            </a>
           </div>
 
-          {(linkStatus === 'resolving' || linkStatus === 'downloading') && linkTitle && (
-            <div className="yt-section__progress">
-              <div className="yt-section__progress-spinner" />
-              <span>{linkStatus === 'resolving' ? 'Resolving link…' : <>Downloading: <strong>{linkTitle}</strong></>}</span>
-            </div>
-          )}
-
-          {linkNote && (
-            <div className="yt-section__tips">{linkNote}</div>
-          )}
-
-          {linkError && (
-            <div className="yt-section__error">⚠ {linkError}</div>
-          )}
+          <div className="yt-section__tips">
+            <strong>How to use:</strong>
+            <ol style={{ marginTop: '0.5rem', paddingLeft: '1.25rem' }}>
+              <li>Copy your YouTube video link.</li>
+              <li>Open <strong>https://cnvmp3.com/v51</strong> and paste the link.</li>
+              <li>Select <strong>MP3</strong> and choose <strong>320kbps</strong>.</li>
+              <li>Download the MP3 file.</li>
+              <li>Come back here and drag/drop that MP3 into the upload box.</li>
+            </ol>
+          </div>
         </div>
       )}
 
