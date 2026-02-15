@@ -13,10 +13,36 @@ interface YTStreamResult {
   duration: number; // seconds
 }
 
-interface LinkToMp3Result {
-  title: string;
-  audioUrl: string;
-  note?: string;
+function extractYouTubeVideoIdFromUrl(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+
+  // Accept plain 11-char IDs as convenience
+  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
+
+  try {
+    const url = new URL(raw);
+
+    if (url.hostname.includes('youtu.be')) {
+      const id = url.pathname.split('/').filter(Boolean)[0] ?? '';
+      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    }
+
+    if (url.hostname.includes('youtube.com')) {
+      const v = url.searchParams.get('v');
+      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
+
+      const segments = url.pathname.split('/').filter(Boolean);
+      const marker = segments.findIndex((segment) => segment === 'shorts' || segment === 'embed');
+      if (marker >= 0 && segments[marker + 1] && /^[A-Za-z0-9_-]{11}$/.test(segments[marker + 1])) {
+        return segments[marker + 1];
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
@@ -100,31 +126,6 @@ async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
   }
 
   return await resp.blob();
-}
-
-async function convertLinkToMp3(url: string): Promise<LinkToMp3Result> {
-  const resp = await fetch('/api/yt-to-mp3', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-    signal: AbortSignal.timeout(45000),
-  });
-
-  const contentType = resp.headers.get('content-type') ?? '';
-  const isJson = contentType.includes('application/json');
-  const data = isJson ? await resp.json().catch(() => null) : null;
-
-  if (!resp.ok || !data || typeof data !== 'object' || !('audioUrl' in data)) {
-    const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
-    const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-    throw new Error(body.error || 'Could not convert this link right now.');
-  }
-
-  return {
-    title: (data as { title?: string }).title ?? 'Converted Track',
-    audioUrl: (data as { audioUrl: string }).audioUrl,
-    note: (data as { note?: string }).note,
-  };
 }
 
 // ── IndexedDB helpers for persisting uploaded songs ──────────────────────────
@@ -444,9 +445,14 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       setLinkTitle(null);
       setLinkNote(null);
 
-      const result = await convertLinkToMp3(raw);
+      const videoId = extractYouTubeVideoIdFromUrl(raw);
+      if (!videoId) {
+        throw new Error('Please paste a valid YouTube link (youtube.com or youtu.be).');
+      }
+
+      const result = await fetchYouTubeAudio(videoId, ytApiKey);
       setLinkTitle(result.title);
-      setLinkNote(result.note ?? null);
+      setLinkNote('Downloaded from YouTube link.');
       setLinkStatus('downloading');
 
       const blob = await downloadYouTubeBlob(result.audioUrl);
@@ -470,7 +476,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       setLinkError((err as Error).message);
       setLinkStatus('error');
     }
-  }, [linkInput]);
+  }, [linkInput, ytApiKey]);
 
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -717,7 +723,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
             <div>
               <div className="yt-section__title">YT to MP3</div>
               <div className="yt-section__subtitle">
-                Paste a YouTube, YouTube Music, or Spotify link and auto-convert it to an MP3 download for the game.
+                Paste a YouTube link and auto-download the audio so you can play it in-game.
               </div>
             </div>
           </div>
@@ -726,7 +732,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
             <input
               type="text"
               className="yt-section__input"
-              placeholder="Paste YouTube / YouTube Music / Spotify link..."
+              placeholder="Paste YouTube link..."
               value={linkInput}
               onChange={(e) => { setLinkInput(e.target.value); setLinkError(null); }}
               onKeyDown={(e) => {

@@ -25,11 +25,7 @@ function normalizeBase(url: string): string {
 }
 
 function isYouTubeLike(url: string): boolean {
-  return /(?:youtube\.com|youtu\.be|music\.youtube\.com)/i.test(url);
-}
-
-function isSpotifyLike(url: string): boolean {
-  return /(?:open\.spotify\.com|spotify\.link)/i.test(url);
+  return /(?:youtube\.com|youtu\.be)/i.test(url);
 }
 
 function extractYouTubeVideoId(input: string): string | null {
@@ -93,64 +89,6 @@ async function getDynamicInvidiousInstances(): Promise<string[]> {
       .map(([, meta]) => normalizeBase(meta.uri!));
   } catch {
     return [];
-  }
-}
-
-async function searchYouTubeVideoId(query: string): Promise<string | null> {
-  const pipedCandidates = Array.from(new Set([...(await getDynamicPipedInstances()), ...PIPED_INSTANCES.map(normalizeBase)]));
-
-  for (const base of pipedCandidates) {
-    try {
-      const url = `${base}/search?q=${encodeURIComponent(query)}&filter=music_songs`;
-      const resp = await fetch(url, {
-        signal: AbortSignal.timeout(10000),
-        headers: { 'User-Agent': 'RhythmAI/1.0' },
-      });
-      if (!resp.ok) continue;
-
-      const data = (await resp.json()) as {
-        items?: Array<{
-          url?: string;
-          title?: string;
-          type?: string;
-        }>;
-      };
-
-      const first = (data.items ?? []).find((item) => item.type === 'stream' && item.url && item.title);
-      if (!first?.url) continue;
-
-      const match = first.url.match(/[?&]v=([A-Za-z0-9_-]{11})/);
-      if (match?.[1]) return match[1];
-
-      const parts = first.url.split('/').filter(Boolean);
-      const id = parts[parts.length - 1];
-      if (/^[A-Za-z0-9_-]{11}$/.test(id)) return id;
-    } catch {
-      // try next
-    }
-  }
-
-  return null;
-}
-
-async function resolveSpotifySearchQuery(url: string): Promise<string | null> {
-  try {
-    const oembed = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, {
-      signal: AbortSignal.timeout(10000),
-      headers: { 'User-Agent': 'RhythmAI/1.0' },
-    });
-
-    if (!oembed.ok) return null;
-
-    const data = (await oembed.json()) as { title?: string; author_name?: string };
-    const title = (data.title ?? '').trim();
-    const author = (data.author_name ?? '').trim();
-
-    if (title && author) return `${author} - ${title}`;
-    if (title) return title;
-    return null;
-  } catch {
-    return null;
   }
 }
 
@@ -340,6 +278,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Invalid URL format' });
   }
 
+  if (!isYouTubeLike(url)) {
+    return res.status(400).json({
+      error: 'Unsupported link. Please paste a YouTube URL (youtube.com or youtu.be).',
+    });
+  }
+
   // 1) Best effort direct MP3-320 conversion for all supported links
   const cobaltDirect = await tryCobaltAudioExtraction(url);
   if (cobaltDirect) {
@@ -384,55 +328,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(502).json({ error: 'Could not extract audio from this YouTube link right now' });
   }
 
-  // 3) Spotify fallback: resolve title -> search YouTube -> extract audio
-  if (isSpotifyLike(url)) {
-    const query = await resolveSpotifySearchQuery(url);
-    if (!query) {
-      return res.status(502).json({ error: 'Could not resolve Spotify track metadata from this link' });
-    }
-
-    const videoId = await searchYouTubeVideoId(query);
-    if (!videoId) {
-      return res.status(502).json({ error: 'Could not find a matching YouTube version for this Spotify track' });
-    }
-
-    const ytdlResult = await tryYtdlAudioExtraction(videoId);
-    if (ytdlResult) {
-      return res.status(200).json({
-        title: ytdlResult.title,
-        audioUrl: ytdlResult.audioUrl,
-        note: `Resolved from Spotify via YouTube search (${query})`,
-      });
-    }
-
-    const pipedResult = await tryPipedAudioExtraction(videoId);
-    if (pipedResult) {
-      return res.status(200).json({
-        ...pipedResult,
-        note: `Resolved from Spotify via YouTube search (${query}); ${pipedResult.note}`,
-      });
-    }
-
-    const invidiousResult = await tryInvidiousAudioExtraction(videoId);
-    if (invidiousResult) {
-      return res.status(200).json({
-        ...invidiousResult,
-        note: `Resolved from Spotify via YouTube search (${query}); ${invidiousResult.note}`,
-      });
-    }
-
-    const internalResult = await tryInternalYoutubeApiExtraction(req, videoId);
-    if (internalResult) {
-      return res.status(200).json({
-        ...internalResult,
-        note: `Resolved from Spotify via YouTube search (${query}); ${internalResult.note}`,
-      });
-    }
-
-    return res.status(502).json({ error: 'Found a YouTube match, but could not extract its audio stream' });
-  }
-
-  return res.status(400).json({
-    error: 'Unsupported link. Please paste a YouTube, YouTube Music, or Spotify URL.',
-  });
+  return res.status(502).json({ error: 'Could not extract audio from this YouTube link right now' });
 }
