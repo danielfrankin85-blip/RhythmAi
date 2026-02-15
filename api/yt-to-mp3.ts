@@ -11,6 +11,15 @@ const PIPED_INSTANCES = [
   'https://api.piped.yt',
 ];
 
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.fdn.fr',
+  'https://vid.puffyan.us',
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://inv.riverside.rocks',
+  'https://invidious.drgns.space',
+];
+
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -66,6 +75,22 @@ async function getDynamicPipedInstances(): Promise<string[]> {
       .map((instance) => instance.api_url)
       .filter((apiUrl): apiUrl is string => Boolean(apiUrl))
       .map(normalizeBase);
+  } catch {
+    return [];
+  }
+}
+
+async function getDynamicInvidiousInstances(): Promise<string[]> {
+  try {
+    const resp = await fetch('https://api.invidious.io/instances.json?sort_by=health', {
+      signal: AbortSignal.timeout(6000),
+      headers: { 'User-Agent': 'RhythmAI/1.0' },
+    });
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as Array<[string, { type?: string; api?: boolean; uri?: string }]>;
+    return data
+      .filter(([, meta]) => meta?.type === 'https' && meta?.api === true && !!meta?.uri)
+      .map(([, meta]) => normalizeBase(meta.uri!));
   } catch {
     return [];
   }
@@ -197,6 +222,104 @@ async function tryYtdlAudioExtraction(videoId: string): Promise<{ title: string;
   }
 }
 
+async function tryPipedAudioExtraction(videoId: string): Promise<{ title: string; audioUrl: string; note: string } | null> {
+  const pipedCandidates = Array.from(new Set([...(await getDynamicPipedInstances()), ...PIPED_INSTANCES.map(normalizeBase)]));
+
+  for (const base of pipedCandidates) {
+    try {
+      const resp = await fetch(`${base}/streams/${videoId}`, {
+        signal: AbortSignal.timeout(12000),
+        headers: { 'User-Agent': 'RhythmAI/1.0' },
+      });
+      if (!resp.ok) continue;
+
+      const data = await resp.json() as {
+        title?: string;
+        audioStreams?: Array<{ url?: string; mimeType?: string; bitrate?: number }>;
+      };
+
+      const best = (data.audioStreams ?? [])
+        .filter((s) => s.url && s.mimeType?.startsWith('audio/'))
+        .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+
+      if (best?.url) {
+        return {
+          title: data.title ?? `YouTube – ${videoId}`,
+          audioUrl: best.url,
+          note: `Fallback stream via Piped (${base})`,
+        };
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  return null;
+}
+
+async function tryInvidiousAudioExtraction(videoId: string): Promise<{ title: string; audioUrl: string; note: string } | null> {
+  const invidiousCandidates = Array.from(new Set([...(await getDynamicInvidiousInstances()), ...INVIDIOUS_INSTANCES.map(normalizeBase)]));
+
+  for (const base of invidiousCandidates) {
+    try {
+      const resp = await fetch(`${base}/api/v1/videos/${videoId}`, {
+        signal: AbortSignal.timeout(12000),
+        headers: { 'User-Agent': 'RhythmAI/1.0' },
+      });
+      if (!resp.ok) continue;
+
+      const data = await resp.json() as {
+        title?: string;
+        adaptiveFormats?: Array<{ url?: string; type?: string; bitrate?: string }>;
+      };
+
+      const best = (data.adaptiveFormats ?? [])
+        .filter((f) => f.url && f.type?.startsWith('audio/'))
+        .sort((a, b) => parseInt(b.bitrate ?? '0', 10) - parseInt(a.bitrate ?? '0', 10))[0];
+
+      if (best?.url) {
+        return {
+          title: data.title ?? `YouTube – ${videoId}`,
+          audioUrl: best.url,
+          note: `Fallback stream via Invidious (${base})`,
+        };
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  return null;
+}
+
+async function tryInternalYoutubeApiExtraction(req: VercelRequest, videoId: string): Promise<{ title: string; audioUrl: string; note: string } | null> {
+  const host = req.headers.host;
+  if (!host) return null;
+
+  const forwardedProto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim();
+  const proto = forwardedProto || (host.includes('localhost') ? 'http' : 'https');
+  const endpoint = `${proto}://${host}/api/youtube?v=${encodeURIComponent(videoId)}`;
+
+  try {
+    const resp = await fetch(endpoint, {
+      signal: AbortSignal.timeout(30000),
+      headers: { 'User-Agent': 'RhythmAI/1.0' },
+    });
+    if (!resp.ok) return null;
+
+    const data = await resp.json() as { title?: string; audioUrl?: string };
+    if (!data.audioUrl) return null;
+
+    return {
+      title: data.title ?? `YouTube – ${videoId}`,
+      audioUrl: data.audioUrl,
+      note: 'Fallback via internal /api/youtube extractor',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -235,15 +358,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const ytdlResult = await tryYtdlAudioExtraction(videoId);
-    if (!ytdlResult) {
-      return res.status(502).json({ error: 'Could not extract audio from this YouTube link right now' });
+    if (ytdlResult) {
+      return res.status(200).json({
+        title: ytdlResult.title,
+        audioUrl: ytdlResult.audioUrl,
+        note: ytdlResult.note,
+      });
     }
 
-    return res.status(200).json({
-      title: ytdlResult.title,
-      audioUrl: ytdlResult.audioUrl,
-      note: ytdlResult.note,
-    });
+    const pipedResult = await tryPipedAudioExtraction(videoId);
+    if (pipedResult) {
+      return res.status(200).json(pipedResult);
+    }
+
+    const invidiousResult = await tryInvidiousAudioExtraction(videoId);
+    if (invidiousResult) {
+      return res.status(200).json(invidiousResult);
+    }
+
+    const internalResult = await tryInternalYoutubeApiExtraction(req, videoId);
+    if (internalResult) {
+      return res.status(200).json(internalResult);
+    }
+
+    return res.status(502).json({ error: 'Could not extract audio from this YouTube link right now' });
   }
 
   // 3) Spotify fallback: resolve title -> search YouTube -> extract audio
@@ -259,15 +397,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const ytdlResult = await tryYtdlAudioExtraction(videoId);
-    if (!ytdlResult) {
-      return res.status(502).json({ error: 'Found a YouTube match, but could not extract its audio stream' });
+    if (ytdlResult) {
+      return res.status(200).json({
+        title: ytdlResult.title,
+        audioUrl: ytdlResult.audioUrl,
+        note: `Resolved from Spotify via YouTube search (${query})`,
+      });
     }
 
-    return res.status(200).json({
-      title: ytdlResult.title,
-      audioUrl: ytdlResult.audioUrl,
-      note: `Resolved from Spotify via YouTube search (${query})`,
-    });
+    const pipedResult = await tryPipedAudioExtraction(videoId);
+    if (pipedResult) {
+      return res.status(200).json({
+        ...pipedResult,
+        note: `Resolved from Spotify via YouTube search (${query}); ${pipedResult.note}`,
+      });
+    }
+
+    const invidiousResult = await tryInvidiousAudioExtraction(videoId);
+    if (invidiousResult) {
+      return res.status(200).json({
+        ...invidiousResult,
+        note: `Resolved from Spotify via YouTube search (${query}); ${invidiousResult.note}`,
+      });
+    }
+
+    const internalResult = await tryInternalYoutubeApiExtraction(req, videoId);
+    if (internalResult) {
+      return res.status(200).json({
+        ...internalResult,
+        note: `Resolved from Spotify via YouTube search (${query}); ${internalResult.note}`,
+      });
+    }
+
+    return res.status(502).json({ error: 'Found a YouTube match, but could not extract its audio stream' });
   }
 
   return res.status(400).json({
