@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, useEffect, type ChangeEvent } from 'react';
+import { memo, useCallback, useMemo, useState, useEffect, type ChangeEvent, type DragEvent } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
 
 /* ── Song source tab type ─────────────────────────────────────────────── */
@@ -10,6 +10,75 @@ interface SongEntry {
   source: SongTab;
   path?: string;
   file?: File;
+}
+
+interface PersonalSongRecord {
+  id: string;
+  name: string;
+  file: File;
+}
+
+const PERSONAL_DB_NAME = 'rhythm-game-personal-songs';
+const PERSONAL_DB_VERSION = 1;
+const PERSONAL_STORE_NAME = 'songs';
+
+function openPersonalSongsDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(PERSONAL_DB_NAME, PERSONAL_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PERSONAL_STORE_NAME)) {
+        db.createObjectStore(PERSONAL_STORE_NAME, { keyPath: 'id' });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function loadPersonalSongsFromDb(): Promise<SongEntry[]> {
+  const db = await openPersonalSongsDb();
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(PERSONAL_STORE_NAME, 'readonly');
+    const store = transaction.objectStore(PERSONAL_STORE_NAME);
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      const records = (request.result as PersonalSongRecord[]) ?? [];
+      resolve(
+        records.map((record) => ({
+          id: record.id,
+          name: record.name,
+          source: 'personal' as const,
+          file: record.file,
+        }))
+      );
+    };
+
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function savePersonalSongsToDb(songs: SongEntry[]): Promise<void> {
+  const db = await openPersonalSongsDb();
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(PERSONAL_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(PERSONAL_STORE_NAME);
+
+    store.clear();
+    songs.forEach((song) => {
+      if (song.file) {
+        store.put({ id: song.id, name: song.name, file: song.file } satisfies PersonalSongRecord);
+      }
+    });
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
 }
 
 /* ── Song data ────────────────────────────────────────────────────────── */
@@ -77,31 +146,20 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty | null>(null);
   const [personalSongs, setPersonalSongs] = useState<SongEntry[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
 
-  // Load personal songs from localStorage on mount
+  // Load personal songs from IndexedDB on mount
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('rhythmgame-personal-songs');
-      if (saved) {
-        const parsed = JSON.parse(saved) as Array<Omit<SongEntry, 'file'>>;
-        // Note: File objects can't be stored in localStorage, so personal songs
-        // won't have actual File references after refresh. User must re-upload.
-        setPersonalSongs(parsed.map(s => ({ ...s, source: 'personal' as const })));
-      }
-    } catch (error) {
-      console.error('Failed to load personal songs from localStorage', error);
-    }
+    loadPersonalSongsFromDb()
+      .then((songsFromDb) => setPersonalSongs(songsFromDb))
+      .catch((error) => console.error('Failed to load personal songs from IndexedDB', error));
   }, []);
 
-  // Save personal songs to localStorage whenever they change
+  // Save personal songs to IndexedDB whenever they change
   useEffect(() => {
-    try {
-      // Serialize without File objects (can't be stored)
-      const serializable = personalSongs.map(({ id, name, source, path }) => ({ id, name, source, path }));
-      localStorage.setItem('rhythmgame-personal-songs', JSON.stringify(serializable));
-    } catch (error) {
-      console.error('Failed to save personal songs to localStorage', error);
-    }
+    savePersonalSongsToDb(personalSongs).catch((error) =>
+      console.error('Failed to save personal songs to IndexedDB', error)
+    );
   }, [personalSongs]);
 
   /* Derived */
@@ -113,30 +171,53 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   }, [activeTab, personalSongs]);
 
   const selectedSong = useMemo(() => songs.find((s) => s.id === selectedSongId) ?? null, [songs, selectedSongId]);
-  const canStart = Boolean(selectedSong && selectedDifficulty);
+  const canStart = Boolean(selectedSong && selectedDifficulty && (selectedSong.file || selectedSong.path));
 
   /* Handlers */
   const handleTabChange = useCallback((tab: SongTab) => {
     setActiveTab(tab);
     setSelectedSongId(null);
+    setSelectedDifficulty(null);
   }, []);
 
-  const handleUploadFiles = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []).filter((f) => f.type.startsWith('audio/'));
-    if (!files.length) return;
+  const addPersonalFiles = useCallback((files: File[]) => {
+    const audioFiles = files.filter((file) => file.type.startsWith('audio/'));
+    if (!audioFiles.length) return;
 
-    const mapped: SongEntry[] = files.map((f) => ({
-      id: `personal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${f.name}`,
-      name: fileNameToTitle(f.name),
+    const mapped: SongEntry[] = audioFiles.map((file) => ({
+      id: `personal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${file.name}`,
+      name: fileNameToTitle(file.name),
       source: 'personal' as const,
-      file: f,
+      file,
     }));
 
     setPersonalSongs((prev) => [...mapped, ...prev]);
     setActiveTab('personal');
     setSelectedSongId(mapped[0].id);
-    setSelectedDifficulty(null); // Reset difficulty when uploading new songs
+    setSelectedDifficulty(null);
+  }, []);
+
+  const handleUploadFiles = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    addPersonalFiles(files);
     event.currentTarget.value = '';
+  }, [addPersonalFiles]);
+
+  const handleDropUpload = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragOver(false);
+    const droppedFiles = Array.from(event.dataTransfer.files ?? []);
+    addPersonalFiles(droppedFiles);
+  }, [addPersonalFiles]);
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!isDragOver) setIsDragOver(true);
+  }, [isDragOver]);
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragOver(false);
   }, []);
 
   const handleStartGame = useCallback(async () => {
@@ -219,6 +300,19 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
         </div>
       </nav>
 
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDropUpload}
+        className={`mb-6 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition ${
+          isDragOver
+            ? 'border-sky-300 bg-sky-500/20 text-white'
+            : 'border-gray-600 bg-game-panel/40 text-gray-300'
+        }`}
+      >
+        Drag and drop an audio file here to upload into Personal. Then choose difficulty and Start to let AI analyze and create the beatmap.
+      </div>
+
       {/* ── Main area: songs LEFT ↔ difficulty RIGHT ── */}
       <div className="flex flex-1 gap-10 lg:gap-20">
 
@@ -270,7 +364,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
 
         {/* ── RIGHT: Difficulty + Start (only show when song selected) ── */}
         {selectedSongId && (
-          <aside className="w-52 shrink-0" style={{ zIndex: 1 }}>
+          <aside className="w-72 shrink-0" style={{ zIndex: 1 }}>
             <h2 className="mb-5 text-lg font-semibold text-white">Difficulty</h2>
 
             <div className="flex flex-col gap-3">
@@ -281,7 +375,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
                     key={d.value}
                     onClick={() => setSelectedDifficulty(d.value)}
                     className={`
-                      rounded-xl border-2 px-4 py-3 text-left text-sm font-bold uppercase tracking-wider text-white
+                      rounded-xl border-2 px-5 py-4 text-left text-base font-bold uppercase tracking-wider text-white
                       transition-all duration-200 ease-out
                       hover:-translate-y-0.5 hover:shadow-md
                       ${isActive
@@ -300,7 +394,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
               type="button"
               disabled={!canStart || isLoading}
               onClick={handleStartGame}
-              className="mt-8 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-8 w-full rounded-xl bg-emerald-500 px-5 py-4 text-base font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Start game with selected song and difficulty"
               style={{ pointerEvents: (!canStart || isLoading) ? 'none' : 'auto' }}
             >
