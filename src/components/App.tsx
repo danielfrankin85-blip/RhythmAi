@@ -57,6 +57,10 @@ export function App() {
     const saved = localStorage.getItem('missDipEnabled');
     return saved ? JSON.parse(saved) : true;
   });
+  const [ghostKeyEnabled, setGhostKeyEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('ghostKeyEnabled');
+    return saved ? JSON.parse(saved) : true;
+  });
   const [leaderboardRuns] = useState<Array<{
     score: number;
     accuracy: number;
@@ -274,6 +278,8 @@ export function App() {
       gameEngineRef.current = gameEngine;
       gameEngine.setMusicVolume(musicVolume);
       gameEngine.setSfxVolume(sfxVolume);
+      gameEngine.setMissDipEnabled(missDipEnabled);
+      gameEngine.setGhostKeyEnabled(ghostKeyEnabled);
 
       // Load beatmap
       gameEngine.loadBeatmap(beatmap.notes);
@@ -303,7 +309,7 @@ export function App() {
     } finally {
       setIsLoadingBeatmap(false);
     }
-  }, [createGameEngine, musicVolume, sfxVolume, startUIUpdates]);
+  }, [createGameEngine, ghostKeyEnabled, missDipEnabled, musicVolume, sfxVolume, startUIUpdates]);
 
   // ── Restart ────────────────────────────────────────────────────────────
   const handleRestart = useCallback(async () => {
@@ -327,6 +333,8 @@ export function App() {
       gameEngineRef.current = gameEngine;
       gameEngine.setMusicVolume(musicVolume);
       gameEngine.setSfxVolume(sfxVolume);
+      gameEngine.setMissDipEnabled(missDipEnabled);
+      gameEngine.setGhostKeyEnabled(ghostKeyEnabled);
 
       // Load beatmap
       gameEngine.loadBeatmap(current.beatmap.notes);
@@ -352,7 +360,7 @@ export function App() {
       console.error('Failed to restart:', err);
       setAppState('menu');
     }
-  }, [createGameEngine, musicVolume, sfxVolume, startUIUpdates]);
+  }, [createGameEngine, ghostKeyEnabled, missDipEnabled, musicVolume, sfxVolume, startUIUpdates]);
 
   // ── Main Menu ──────────────────────────────────────────────────────────
   const handleMainMenu = useCallback(() => {
@@ -403,6 +411,13 @@ export function App() {
   const handleMissDipEnabledChange = useCallback((enabled: boolean) => {
     setMissDipEnabled(enabled);
     localStorage.setItem('missDipEnabled', JSON.stringify(enabled));
+    gameEngineRef.current?.setMissDipEnabled(enabled);
+  }, []);
+
+  const handleGhostKeyEnabledChange = useCallback((enabled: boolean) => {
+    setGhostKeyEnabled(enabled);
+    localStorage.setItem('ghostKeyEnabled', JSON.stringify(enabled));
+    gameEngineRef.current?.setGhostKeyEnabled(enabled);
   }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -475,6 +490,8 @@ export function App() {
           onPerfectHitSoundChange={handlePerfectHitSoundChange}
           missDipEnabled={missDipEnabled}
           onMissDipEnabledChange={handleMissDipEnabledChange}
+          ghostKeyEnabled={ghostKeyEnabled}
+          onGhostKeyEnabledChange={handleGhostKeyEnabledChange}
           onClose={handleCloseSettings}
         />
       )}

@@ -117,6 +117,8 @@ export class GameEngine extends EventEmitter<GameEventMap> {
   private missDipTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Whether miss volume dip feedback is enabled. */
   private missDipEnabled = true;
+  /** When true, pressing empty lanes does not count as a miss. */
+  private ghostKeyEnabled = true;
   /** Original music volume to restore after miss dip. */
   private originalMusicVolume = 0.7;
 
@@ -209,6 +211,14 @@ export class GameEngine extends EventEmitter<GameEventMap> {
 
   getMissDipEnabled(): boolean {
     return this.missDipEnabled;
+  }
+
+  setGhostKeyEnabled(enabled: boolean): void {
+    this.ghostKeyEnabled = enabled;
+  }
+
+  getGhostKeyEnabled(): boolean {
+    return this.ghostKeyEnabled;
   }
 
   /** Update hit/perfect SFX volume (0..1). */
@@ -517,8 +527,29 @@ export class GameEngine extends EventEmitter<GameEventMap> {
           }
         }
         // If judgment is null (edge case), just ignore — don't penalize
+      } else if (!this.ghostKeyEnabled) {
+        const hadCombo = this.scoreEngine.getState().combo > 0;
+        this.scoreEngine.registerMiss();
+
+        const ghostMissNote: ActiveNote = {
+          id: -1,
+          time: correctedSongTime,
+          lane: evt.lane,
+          state: NoteState.MISSED,
+          y: 0,
+          judgedAt: correctedSongTime,
+        };
+
+        this.emit(GameEvent.NOTE_MISS, { note: ghostMissNote });
+        this.triggerMissDip();
+        if (hadCombo) {
+          this.emit(GameEvent.COMBO_BREAK, {
+            finalCombo: this.scoreEngine.getState().maxCombo,
+          });
+        }
+        this.emit(GameEvent.SCORE_UPDATE, { score: this.scoreEngine.getState() });
       }
-      // No note nearby — just ignore the press (no penalty)
+      // No note nearby — ignored when ghost key is on, miss when off
     }
   }
 
