@@ -320,7 +320,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
         <section className="flex-1" style={{ overflow: 'visible' }}>
           <h2 className="mb-5 text-lg font-semibold text-white">Songs</h2>
 
-          <div className="flex flex-col gap-4 overflow-y-auto overflow-x-visible pr-8" style={{ maxHeight: '70vh' }}>
+          <div className="song-list flex flex-col gap-4 overflow-y-auto overflow-x-visible pr-8" style={{ maxHeight: '70vh' }}>
             {songs.length === 0 && (
               <p className="text-sm text-gray-500">No songs in this tab yet.</p>
             )}
@@ -339,7 +339,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
                     text-left text-black shadow-sm
                     max-w-[320px] w-full
                     transition-all duration-300 ease-out
-                    hover:translate-x-3 hover:scale-105 hover:shadow-lg hover:z-10
+                    hover:shadow-lg hover:z-10
                     focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-game-bg
                     ${isSelected
                       ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.35)]'

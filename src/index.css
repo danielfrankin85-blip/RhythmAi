@@ -20,5 +20,21 @@
 }
 
 @layer components {
-  /* Song card hover effects - only affect hovered card */
+  .song-list .song-card {
+    transform: translateX(0) scale(1);
+  }
+
+  .song-list .song-card:hover {
+    transform: translateX(22px) scale(1.07);
+  }
+
+  .song-list .song-card:hover + .song-card,
+  .song-list .song-card:has(+ .song-card:hover) {
+    transform: translateX(10px) scale(1.02);
+  }
+
+  .song-list .song-card:hover + .song-card + .song-card,
+  .song-list .song-card:has(+ .song-card + .song-card:hover) {
+    transform: translateX(5px) scale(1.01);
+  }
 }
