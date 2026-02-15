@@ -1,736 +1,184 @@
-import { memo, useState, useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useMemo, useState, type ChangeEvent } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
-import { DifficultySelect } from './DifficultySelect';
+import { BeatmapOptionsPanel } from './selection/BeatmapOptionsPanel';
+import { DifficultyPanel } from './selection/DifficultyPanel';
+import { SongListPanel } from './selection/SongListPanel';
+import { TopNavTabs } from './selection/TopNavTabs';
+import type { NavigationTab, SongOption } from './selection/types';
 
-// ── YouTube helpers ──────────────────────────────────────────────────────────
-
-/** Public Piped / Invidious instances we try in order (all have CORS support) */
-// Proxied through our own /api/youtube serverless route to avoid CORS issues
-
-interface YTStreamResult {
-  title: string;
-  audioUrl: string;
-  duration: number; // seconds
-}
-
-async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
-  const fetchFromProxy = async (): Promise<YTStreamResult> => {
-    const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
-      signal: AbortSignal.timeout(30000),
-    });
-
-    const contentType = resp.headers.get('content-type') ?? '';
-    const isJson = contentType.includes('application/json');
-    const data = isJson ? await resp.json().catch(() => null) : null;
-
-    if (!resp.ok) {
-      const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
-      const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-      throw new Error(
-        body.error ||
-          'Could not extract audio from this YouTube video.\n\n' +
-            'All proxy servers are currently unavailable or the video is restricted.\n' +
-            'Try again in a moment, or paste a different link.'
-      );
-    }
-
-    if (!data || typeof data !== 'object' || !('audioUrl' in data)) {
-      throw new Error(
-        'YouTube API returned an invalid response in local dev. Restart `npm run dev` so /api proxy is applied, then try again.'
-      );
-    }
-
-    return {
-      title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
-      audioUrl: (data as { audioUrl: string }).audioUrl,
-      duration: (data as { duration?: number }).duration ?? 0,
-    };
-  };
-
-  // If user has API key, use official YouTube Data API (more reliable)
-  if (apiKey && apiKey.trim()) {
-    try {
-      const resp = await fetch('/api/youtube-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ v: videoId, apiKey }),
-        signal: AbortSignal.timeout(30000),
-      });
-
-      const contentType = resp.headers.get('content-type') ?? '';
-      const isJson = contentType.includes('application/json');
-      const data = isJson ? await resp.json().catch(() => null) : null;
-
-      if (resp.ok && data && typeof data === 'object' && 'audioUrl' in data) {
-        return {
-          title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
-          audioUrl: (data as { audioUrl: string }).audioUrl,
-          duration: (data as { duration?: number }).duration ?? 0,
-        };
-      }
-
-      const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
-      const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-      console.warn('[YouTube] API-key extraction failed; falling back to proxy:', body.error || resp.status);
-      return await fetchFromProxy();
-    } catch (err) {
-      console.warn('[YouTube] API-key extraction network error; falling back to proxy:', (err as Error).message);
-      return await fetchFromProxy();
-    }
-  }
-
-  // Fall back to proxy servers (Piped/Invidious/cobalt)
-  return await fetchFromProxy();
-}
-
-async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
-  // Route through our own serverless proxy to avoid CORS on the audio stream
-  const resp = await fetch(`/api/youtube-download?url=${encodeURIComponent(audioUrl)}`, {
-    signal: AbortSignal.timeout(120000),
-  });
-
-  if (!resp.ok) {
-    throw new Error('Failed to download the audio stream. The video may be geo-restricted or too large.');
-  }
-
-  return await resp.blob();
-}
-
-// ── IndexedDB helpers for persisting uploaded songs ──────────────────────────
-
-const DB_NAME = 'RhythmGameSongs';
-const DB_VERSION = 1;
-const STORE_NAME = 'songs';
-
-interface StoredSong {
-  id: string;
-  name: string;
-  blob: Blob;
-  addedAt: number;
-  size: number;
-}
-
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function getAllStoredSongs(): Promise<StoredSong[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result ?? []);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function storeSong(song: StoredSong): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.put(song);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function deleteSong(id: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// ── Built-in songs (shipped with the game) ──────────────────────────────────
-
-const BUILTIN_SONGS = [
-  { id: 'b1',  name: 'Central Cee - Booga', path: '/music/Central_Cee_-_Booga_(Lyrics)_320k.mp3' },
-  { id: 'b2',  name: 'Don Toliver - FWU', path: '/music/Don_Toliver_-_FWU_(AUDIO)_320k.mp3' },
-  { id: 'b3',  name: 'Lil Uzi Vert - What You Saying', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
-  { id: 'b4',  name: 'Playboi Carti - Kelly K', path: '/music/Playboi_Carti_-_Kelly_K_(Audio)_320k.mp3' },
-  { id: 'b5',  name: 'PUT IT ONG', path: '/music/PUT_IT_ONG_320k.mp3' },
-  { id: 'b6',  name: 'The Weeknd, Playboi Carti - Timeless', path: '/music/The_Weeknd%2C_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
-  { id: 'b7',  name: 'Lost Umbrella (ロストアンブレラ)', path: '/music/%E7%A8%B2%E8%91%89%E6%9B%87%E3%80%8E%E3%83%AD%E3%82%B9%E3%83%88%E3%82%A2%E3%83%B3%E3%83%96%E3%83%AC%E3%83%A9%E3%80%8FVo._%E6%AD%8C%E6%84%9B%E3%83%A6%E3%82%AD_320k.mp3' },
-  { id: 'b8',  name: 'Like Him', path: '/music/Like_Him_320k.mp3' },
-  { id: 'b9',  name: 'F-L-Y - Spectrum', path: '/music/Spectrum_%5B%E3%82%B9%E3%83%9A%E3%82%AF%E3%83%88%E3%83%A9%E3%83%A0%5D_-_F-L-Y_(1980)_320k.mp3' },
-  { id: 'b10', name: 'NIWA - Teno and More', path: '/music/NIWA_FULL_SHOWCASE_-_Teno_and_More_320k.mp3' },
-  { id: 'b11', name: 'Slava Song', path: '/music/Omer_Adam_feat._Arisa_-_Tel_Aviv_320k.mp3' },
-  { id: 'b13', name: 'Lil Tecca - Dark Thoughts', path: '/music/Lil_Tecca_-_Dark_Thoughts_(Official_Video)_320k.mp3' },
-  { id: 'b15', name: 'Airplane Mode', path: '/music/Airplane_Mode_320k.mp3' },
-  { id: 'b16', name: "ANRI - I Can't Stop The Loneliness", path: '/music/ANRI_-_I_Can%27t_Stop_The_Loneliness_320k.mp3' },
-  { id: 'b17', name: 'Hi-Fi Set - Sky Restaurant', path: '/music/Hi_Fi_Set_-_Sky_Restaurant_320k.mp3' },
-  { id: 'b18', name: 'Imogen Heap - Headlock', path: '/music/Imogen_Heap_-_Headlock_(Lyrics)_320k.mp3' },
-  { id: 'b19', name: 'RAYE - Where Is My Husband', path: '/music/RAYE_-_Where_Is_My_Husband_320k.mp3' },
-  { id: 'b20', name: 'Emotional Prism', path: '/music/%E3%83%9F%E3%82%AB%E3%83%85%E3%82%ADBIGWAVE_-_Emotional_Prism_%E6%84%9F%E6%83%85%E7%9A%84%E3%81%AA%E3%83%97%E3%83%AA%E3%82%BA%E3%83%A0_320k.mp3' },
-  { id: 'b21', name: 'Yasuha - Flyday Chinatown', path: '/music/Yasuha_-_Flyday_Chinatown_320k.mp3' },
+const BUILT_IN_SONGS: SongOption[] = [
+  { id: 'b1', name: 'Central Cee - Booga', source: 'builtin', path: '/music/Central_Cee_-_Booga_(Lyrics)_320k.mp3' },
+  { id: 'b2', name: 'Don Toliver - FWU', source: 'builtin', path: '/music/Don_Toliver_-_FWU_(AUDIO)_320k.mp3' },
+  { id: 'b3', name: 'Lil Uzi Vert - What You Saying', source: 'builtin', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
+  { id: 'b4', name: 'Playboi Carti - Kelly K', source: 'builtin', path: '/music/Playboi_Carti_-_Kelly_K_(Audio)_320k.mp3' },
+  { id: 'b5', name: 'PUT IT ONG', source: 'builtin', path: '/music/PUT_IT_ONG_320k.mp3' },
+  { id: 'b6', name: 'The Weeknd, Playboi Carti - Timeless', source: 'builtin', path: '/music/The_Weeknd%2C_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
 ];
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-type SongEntry =
-  | { type: 'builtin'; id: string; name: string; path: string }
-  | { type: 'custom';  id: string; name: string; blob: Blob; size: number };
-
-const ACCEPTED_AUDIO_TYPES = [
-  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg',
-  'audio/flac', 'audio/aac', 'audio/webm', 'audio/mp4',
-  'audio/x-m4a', 'audio/m4a',
+const RHYTHM_AI_SONGS: SongOption[] = [
+  { id: 'ai-1', name: 'Rhythm AI Suggestion: Neon Pulse', source: 'rhythm-ai' },
+  { id: 'ai-2', name: 'Rhythm AI Suggestion: Skyline Drive', source: 'rhythm-ai' },
+  { id: 'ai-3', name: 'Rhythm AI Suggestion: Night Circuit', source: 'rhythm-ai' },
 ];
 
-const ACCEPTED_EXTENSIONS = [
-  '.mp3', '.wav', '.ogg', '.flac', '.aac', '.webm', '.m4a', '.mp4',
+const YOUTUBE_SONGS: SongOption[] = [
+  { id: 'yt-1', name: 'YouTube Import Placeholder #1', source: 'youtube' },
+  { id: 'yt-2', name: 'YouTube Import Placeholder #2', source: 'youtube' },
 ];
 
-function isAudioFile(file: File): boolean {
-  if (ACCEPTED_AUDIO_TYPES.includes(file.type)) return true;
-  const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-  return ACCEPTED_EXTENSIONS.includes(ext);
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function prettySongName(filename: string): string {
-  // Strip common suffixes and extensions, replace underscores/dashes with spaces
-  return filename
-    .replace(/\.[^.]+$/, '')            // strip extension
-    .replace(/_320k$/i, '')             // strip bitrate tag
-    .replace(/[_]+/g, ' ')             // underscores → spaces
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// ── Component ────────────────────────────────────────────────────────────────
+const YT_MP3_SONGS: SongOption[] = [
+  { id: 'ytmp3-1', name: 'YouTube to MP3 Placeholder #1', source: 'yt-mp3' },
+  { id: 'ytmp3-2', name: 'YouTube to MP3 Placeholder #2', source: 'yt-mp3' },
+];
 
 interface SongSelectProps {
   onStartGame: (file: File, difficulty: Difficulty, songId: string, songName: string) => void;
   isLoading: boolean;
   bestRecords: Record<string, { bestScore: number; bestAccuracy: number }>;
-  bestRecordsByDifficulty: Record<string, Partial<Record<Difficulty, { bestScore: number; bestAccuracy: number }>>>;
 }
 
-export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords, bestRecordsByDifficulty }) => {
-  const [selectedSong, setSelectedSong] = useState<SongEntry | null>(null);
-  const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  const [isFetching, setIsFetching] = useState(false);
-  const [customSongs, setCustomSongs] = useState<StoredSong[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [tab, setTab] = useState<'library' | 'custom' | 'youtube' | 'ytmp3'>('library');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+function fileNameToTitle(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+}
 
-  // YouTube search state
-  const [ytQuery, setYtQuery] = useState('');
-  const [ytResults, setYtResults] = useState<Array<{ videoId: string; title: string; thumbnail: string; uploaderName: string; duration: number }>>([]);
-  const [ytStatus, setYtStatus] = useState<'idle' | 'searching' | 'resolving' | 'downloading' | 'error'>('idle');
-  const [ytError, setYtError] = useState<string | null>(null);
-  const [ytTitle, setYtTitle] = useState<string | null>(null);
-  const [ytActiveId, setYtActiveId] = useState<string | null>(null);
-  const [ytApiKey, setYtApiKey] = useState<string>(() => localStorage.getItem('ytApiKey') ?? '');
+export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords }) => {
+  const [activeTab, setActiveTab] = useState<NavigationTab>('builtin');
+  const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
+  const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty | null>(null);
+  const [personalSongs, setPersonalSongs] = useState<SongOption[]>([]);
+  const [uiMessage, setUiMessage] = useState<string>('Select a song and difficulty to unlock beatmap options.');
 
-  // Load persisted custom songs from IndexedDB on mount
-  useEffect(() => {
-    getAllStoredSongs()
-      .then((songs) => setCustomSongs(songs.sort((a, b) => b.addedAt - a.addedAt)))
-      .catch((err) => console.warn('Could not load stored songs:', err));
+  const songs = useMemo(() => {
+    if (activeTab === 'builtin') return BUILT_IN_SONGS;
+    if (activeTab === 'personal') return personalSongs;
+    if (activeTab === 'rhythm-ai') return RHYTHM_AI_SONGS;
+    if (activeTab === 'youtube') return YOUTUBE_SONGS;
+    return YT_MP3_SONGS;
+  }, [activeTab, personalSongs]);
+
+  const selectedSong = useMemo(() => songs.find((song) => song.id === selectedSongId) ?? null, [songs, selectedSongId]);
+  const canOpenBeatmapOptions = Boolean(selectedSong && selectedDifficulty);
+
+  const handleTabChange = useCallback((tab: NavigationTab) => {
+    setActiveTab(tab);
+    setSelectedSongId(null);
+    setUiMessage('Select a song and difficulty to unlock beatmap options.');
   }, []);
 
-  // Save YouTube API key to localStorage when it changes
-  useEffect(() => {
-    if (ytApiKey) {
-      localStorage.setItem('ytApiKey', ytApiKey);
-    } else {
-      localStorage.removeItem('ytApiKey');
-    }
-  }, [ytApiKey]);
+  const handleUploadFiles = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.type.startsWith('audio/'));
 
-  // ── Add files (from input or drop) ────────────────────────────────────
-  const addFiles = useCallback(async (files: FileList | File[]) => {
-    const audioFiles = Array.from(files).filter(isAudioFile);
-    if (audioFiles.length === 0) {
-      alert('No supported audio files found.\n\nSupported formats: MP3, WAV, OGG, FLAC, AAC, M4A, WebM');
+    if (!files.length) {
+      setUiMessage('No supported audio files were selected.');
       return;
     }
 
-    const newSongs: StoredSong[] = [];
-    for (const f of audioFiles) {
-      const song: StoredSong = {
-        id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: prettySongName(f.name),
-        blob: f,
-        addedAt: Date.now(),
-        size: f.size,
-      };
-      await storeSong(song);
-      newSongs.push(song);
-    }
+    const mapped = files.map((file) => ({
+      id: `personal-${Date.now()}-${file.name}`,
+      name: fileNameToTitle(file.name),
+      source: 'personal' as const,
+      file,
+    }));
 
-    setCustomSongs((prev) => [...newSongs, ...prev]);
+    setPersonalSongs((prev) => [...mapped, ...prev]);
+    setActiveTab('personal');
+    setSelectedSongId(mapped[0].id);
+    setUiMessage(`${mapped.length} personal song(s) added.`);
 
-    // Auto-select the first uploaded song and switch to custom tab
-    if (newSongs.length > 0) {
-      setTab('custom');
-      const s = newSongs[0];
-      setSelectedSong({ type: 'custom', id: s.id, name: s.name, blob: s.blob, size: s.size });
-    }
+    event.currentTarget.value = '';
   }, []);
 
-  // ── File input handler ────────────────────────────────────────────────
-  const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      addFiles(e.target.files);
-      e.target.value = ''; // reset so same file can be re-added
+  const handleCreateBeatmap = useCallback(() => {
+    if (!canOpenBeatmapOptions || !selectedSong || !selectedDifficulty) return;
+    setUiMessage(`Beatmap options ready for ${selectedSong.name} (${selectedDifficulty}).`);
+  }, [canOpenBeatmapOptions, selectedDifficulty, selectedSong]);
+
+  // Keep existing game flow available from this UI when audio is playable.
+  const handleStartGame = useCallback(async () => {
+    if (!selectedSong || !selectedDifficulty) return;
+
+    if (selectedSong.file) {
+      onStartGame(selectedSong.file, selectedDifficulty, selectedSong.id, selectedSong.name);
+      return;
     }
-  }, [addFiles]);
 
-  // ── Drag & drop handlers ──────────────────────────────────────────────
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    if (e.dataTransfer.files.length > 0) {
-      addFiles(e.dataTransfer.files);
-    }
-  }, [addFiles]);
-
-  // ── Delete a custom song ──────────────────────────────────────────────
-  const handleDelete = useCallback(async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    await deleteSong(id);
-    setCustomSongs((prev) => prev.filter((s) => s.id !== id));
-    if (selectedSong?.id === id) setSelectedSong(null);
-  }, [selectedSong]);
-
-  // ── YouTube search handler ────────────────────────────────────────────
-  const handleYouTubeSearch = useCallback(async () => {
-    const q = ytQuery.trim();
-    if (!q) return;
-    try {
-      setYtStatus('searching');
-      setYtError(null);
-      setYtResults([]);
-      const resp = await fetch(`/api/youtube-search?q=${encodeURIComponent(q)}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-        throw new Error(body.error || 'Search failed');
+    if (selectedSong.path) {
+      const response = await fetch(selectedSong.path);
+      if (!response.ok) {
+        setUiMessage(`Could not load ${selectedSong.name}.`);
+        return;
       }
-      const data = await resp.json();
-      setYtResults(data.results ?? []);
-      setYtStatus('idle');
-    } catch (err) {
-      setYtError((err as Error).message);
-      setYtStatus('error');
+      const blob = await response.blob();
+      const file = new File([blob], selectedSong.path.split('/').pop() ?? 'song.mp3', { type: blob.type || 'audio/mpeg' });
+      onStartGame(file, selectedDifficulty, selectedSong.id, selectedSong.name);
+      return;
     }
-  }, [ytQuery]);
 
-  // ── YouTube pick handler (click a search result) ──────────────────────
-  const handleYouTubePick = useCallback(async (videoId: string, title: string) => {
-    try {
-      setYtActiveId(videoId);
-      setYtStatus('resolving');
-      setYtError(null);
-      setYtTitle(title);
-
-      // Step 1: Resolve stream URL (use API key if available)
-      const result = await fetchYouTubeAudio(videoId, ytApiKey);
-      setYtTitle(result.title);
-      setYtStatus('downloading');
-
-      // Step 2: Download the audio blob
-      const blob = await downloadYouTubeBlob(result.audioUrl);
-
-      // Step 3: Persist to IndexedDB
-      const song: StoredSong = {
-        id: `yt-${videoId}-${Date.now()}`,
-        name: result.title,
-        blob,
-        addedAt: Date.now(),
-        size: blob.size,
-      };
-      await storeSong(song);
-      setCustomSongs((prev) => [song, ...prev]);
-
-      // Auto-select and jump to custom tab
-      setSelectedSong({ type: 'custom', id: song.id, name: song.name, blob: song.blob, size: song.size });
-      setTab('custom');
-      setYtStatus('idle');
-      setYtActiveId(null);
-      setYtTitle(null);
-    } catch (err) {
-      setYtError((err as Error).message);
-      setYtStatus('error');
-      setYtActiveId(null);
-    }
-  }, [ytApiKey]);
-
-  // ── Play selected song ────────────────────────────────────────────────
-  const handleStart = useCallback(async () => {
-    if (!selectedSong || isFetching) return;
-
-    try {
-      setIsFetching(true);
-
-      let file: File;
-
-      if (selectedSong.type === 'builtin') {
-        const response = await fetch(selectedSong.path);
-        if (!response.ok) {
-          throw new Error(`Failed to load song: HTTP ${response.status} ${response.statusText}`);
-        }
-        const blob = await response.blob();
-        file = new File([blob], selectedSong.path.split('/').pop() || 'song.mp3', {
-          type: 'audio/mpeg',
-        });
-      } else {
-        // Custom song — blob is already in memory / IndexedDB
-        file = new File([selectedSong.blob], `${selectedSong.name}.mp3`, {
-          type: selectedSong.blob.type || 'audio/mpeg',
-        });
-      }
-
-      onStartGame(file, difficulty, selectedSong.id, selectedSong.name);
-    } catch (err) {
-      console.error('Failed to load song:', err);
-      alert(`Error loading song: ${(err as Error).message}`);
-    } finally {
-      setIsFetching(false);
-    }
-  }, [selectedSong, difficulty, onStartGame, isFetching]);
-
-  // ── Build display lists ───────────────────────────────────────────────
-
-  const builtinEntries: SongEntry[] = BUILTIN_SONGS.map((s) => ({
-    type: 'builtin' as const,
-    ...s,
-  }));
-
-  const customEntries: SongEntry[] = customSongs.map((s) => ({
-    type: 'custom' as const,
-    id: s.id,
-    name: s.name,
-    blob: s.blob,
-    size: s.size,
-  }));
-
-  const displayList = tab === 'library' ? builtinEntries : customEntries;
+    setUiMessage('This tab is UI-only for now. Pick a Built In or Personal song to continue.');
+  }, [onStartGame, selectedDifficulty, selectedSong]);
 
   return (
-    <div className="song-select">
-      {/* ── Tab bar ──────────────────────────────────────────────────────── */}
-      <div className="song-tabs">
-        <button
-          className={`song-tabs__tab ${tab === 'library' ? 'song-tabs__tab--active' : ''}`}
-          onClick={() => setTab('library')}
-        >
-          Built in
-        </button>
-        <button
-          className={`song-tabs__tab ${tab === 'custom' ? 'song-tabs__tab--active' : ''}`}
-          onClick={() => setTab('custom')}
-        >
-          Personal
-        </button>
-        <div className="song-tabs__brand">Rhythm AI</div>
-        <button
-          className={`song-tabs__tab ${tab === 'youtube' ? 'song-tabs__tab--active' : ''}`}
-          onClick={() => setTab('youtube')}
-        >
-          youtube
-        </button>
-        <button
-          className={`song-tabs__tab ${tab === 'ytmp3' ? 'song-tabs__tab--active' : ''}`}
-          onClick={() => setTab('ytmp3')}
-        >
-          youtube to mp3
-        </button>
+    <div className="rounded-2xl border border-game-border bg-game-surface p-4 md:p-6">
+      <header className="mb-4 space-y-2">
+        <h1 className="text-2xl font-bold">Rhythm Game Selection</h1>
+        <p className="text-sm text-game-muted">Use keyboard arrows in tabs, song list, and difficulty list for fast navigation.</p>
+      </header>
+
+      <TopNavTabs activeTab={activeTab} onTabChange={handleTabChange} />
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_300px]">
+        <div id={`tab-panel-${activeTab}`} role="tabpanel" aria-labelledby={`tab-${activeTab}`} className="space-y-4">
+          <div className="rounded-xl border border-dashed border-game-border bg-game-panel p-3">
+            <label htmlFor="personal-upload" className="block text-sm text-game-text">
+              Upload audio files (Personal tab)
+            </label>
+            <input
+              id="personal-upload"
+              type="file"
+              accept="audio/*"
+              multiple
+              onChange={handleUploadFiles}
+              className="mt-2 w-full cursor-pointer rounded-md border border-game-border bg-game-surface p-2 text-sm text-game-text file:mr-3 file:rounded file:border-0 file:bg-game-accent file:px-3 file:py-1 file:text-sm file:font-medium file:text-slate-900 hover:file:bg-game-accentStrong"
+              aria-label="Upload personal songs"
+            />
+          </div>
+
+          <SongListPanel
+            songs={songs}
+            selectedSongId={selectedSongId}
+            onSongSelect={(song) => setSelectedSongId(song.id)}
+            panelId={`song-panel-${activeTab}`}
+            emptyMessage="No songs in this tab yet."
+            bestRecords={bestRecords}
+          />
+        </div>
+
+        <div className="space-y-4">
+          <DifficultyPanel selectedDifficulty={selectedDifficulty} onDifficultySelect={setSelectedDifficulty} />
+
+          <BeatmapOptionsPanel
+            enabled={canOpenBeatmapOptions}
+            isLoading={isLoading}
+            songName={selectedSong?.name ?? ''}
+            difficultyName={selectedDifficulty ?? ''}
+            onCreateBeatmap={handleCreateBeatmap}
+          />
+
+          <button
+            type="button"
+            disabled={!canOpenBeatmapOptions || isLoading}
+            onClick={handleStartGame}
+            className="w-full rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Start game with selected song and difficulty"
+          >
+            {isLoading ? 'Analyzing...' : 'Start Game'}
+          </button>
+        </div>
       </div>
 
-      {/* ── YouTube tab ───────────────────────────────────────────────── */}
-      {tab === 'youtube' && (
-        <div className="yt-section">
-          <div className="yt-section__header">
-            <div className="yt-section__icon">▶</div>
-            <div>
-              <div className="yt-section__title">Search YouTube</div>
-              <div className="yt-section__subtitle">
-                Search for any song — click a result to download, analyze, and play
-              </div>
-            </div>
-          </div>
-
-          {/* API Key Settings */}
-          <div className="yt-section__api-key">
-            <div className="yt-section__api-key-header">
-              <span>⚙️ YouTube API Key (optional but recommended)</span>
-              <a
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="yt-section__api-key-link"
-              >
-                Get free API key →
-              </a>
-            </div>
-            <input
-              type="password"
-              className="yt-section__api-key-input"
-              placeholder="Paste your YouTube Data API v3 key here..."
-              value={ytApiKey}
-              onChange={(e) => { setYtApiKey(e.target.value); setYtError(null); }}
-              disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
-            />
-            <div className="yt-section__api-key-info">
-              {ytApiKey ? (
-                <span style={{ color: '#4ade80' }}>✓ Using official YouTube API (more reliable)</span>
-              ) : (
-                <span style={{ color: '#fbbf24' }}>⚠ Using proxy servers (may fail for some videos)</span>
-              )}
-            </div>
-          </div>
-
-          <div className="yt-section__input-row">
-            <input
-              type="text"
-              className="yt-section__input"
-              placeholder="Search for a song..."
-              value={ytQuery}
-              onChange={(e) => { setYtQuery(e.target.value); setYtError(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && ytQuery.trim() && ytStatus !== 'searching') handleYouTubeSearch(); }}
-              disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
-            />
-            <button
-              className="yt-section__btn"
-              onClick={handleYouTubeSearch}
-              disabled={!ytQuery.trim() || ytStatus === 'searching' || ytStatus === 'resolving' || ytStatus === 'downloading'}
-            >
-              {ytStatus === 'searching' ? '🔍 Searching...' : '🔍 Search'}
-            </button>
-          </div>
-
-          {(ytStatus === 'resolving' || ytStatus === 'downloading') && ytTitle && (
-            <div className="yt-section__progress">
-              <div className="yt-section__progress-spinner" />
-              <span>{ytStatus === 'resolving' ? 'Finding audio stream…' : <>Downloading: <strong>{ytTitle}</strong></>}</span>
-            </div>
-          )}
-
-          {ytError && (
-            <div className="yt-section__error">
-              ⚠ {ytError}
-            </div>
-          )}
-
-          {/* ── Search results ──────────────────────────────────────────── */}
-          {ytResults.length > 0 && (
-            <div className="yt-results">
-              {ytResults.map((r) => {
-                const mins = Math.floor(r.duration / 60);
-                const secs = r.duration % 60;
-                const isActive = ytActiveId === r.videoId;
-                return (
-                  <button
-                    key={r.videoId}
-                    className={`yt-results__item ${isActive ? 'yt-results__item--active' : ''}`}
-                    onClick={() => handleYouTubePick(r.videoId, r.title)}
-                    disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
-                  >
-                    <img
-                      className="yt-results__thumb"
-                      src={r.thumbnail}
-                      alt=""
-                      loading="lazy"
-                    />
-                    <div className="yt-results__info">
-                      <div className="yt-results__title">{r.title}</div>
-                      <div className="yt-results__meta">
-                        {r.uploaderName}{r.duration > 0 ? ` • ${mins}:${secs.toString().padStart(2, '0')}` : ''}
-                      </div>
-                    </div>
-                    {isActive && (
-                      <div className="yt-results__spinner" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {ytResults.length === 0 && ytStatus === 'idle' && ytQuery.trim() && (
-            <div className="yt-section__tips">
-              No results yet — hit Search or press Enter
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── YT to MP3 tab ───────────────────────────────────────────────── */}
-      {tab === 'ytmp3' && (
-        <div className="yt-section">
-          <div className="yt-section__header">
-            <div className="yt-section__icon">🎧</div>
-            <div>
-              <div className="yt-section__title">YT to MP3</div>
-              <div className="yt-section__subtitle">
-                Use this site to convert your YouTube video to MP3 320kbps, then upload it here.
-              </div>
-            </div>
-          </div>
-
-          <div className="yt-section__tips">
-            <a
-              href="https://cnvmp3.com/v51"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="yt-section__api-key-link"
-            >
-              Open cnvmp3.com/v51 →
-            </a>
-          </div>
-
-          <div className="yt-section__tips">
-            <strong>How to use:</strong>
-            <ol style={{ marginTop: '0.5rem', paddingLeft: '1.25rem' }}>
-              <li>Copy your YouTube video link.</li>
-              <li>Open <strong>https://cnvmp3.com/v51</strong> and paste the link.</li>
-              <li>Select <strong>MP3</strong> and choose <strong>320kbps</strong>.</li>
-              <li>Download the MP3 file.</li>
-              <li>Come back here and drag/drop that MP3 into the upload box.</li>
-            </ol>
-          </div>
-        </div>
-      )}
-
-      {/* ── Two-column layout for library / custom ────────────────────── */}
-      {(tab === 'library' || tab === 'custom') && (
-        <div className="song-layout">
-          {/* Left: difficulty */}
-          <div className="song-layout__left">
-            <div className="song-layout__header">difficulty</div>
-
-            <DifficultySelect
-              selected={difficulty}
-              onSelect={setDifficulty}
-              bestByDifficulty={selectedSong ? bestRecordsByDifficulty[selectedSong.id] : undefined}
-            />
-
-            <button
-              className="btn btn-success"
-              onClick={handleStart}
-              disabled={!selectedSong || isLoading || isFetching}
-              style={{ width: '100%', marginTop: '0.5rem' }}
-            >
-              {isFetching ? 'Loading Song...' : isLoading ? 'Analyzing…' : '▶ Start Game'}
-            </button>
-          </div>
-
-          {/* Right: songs */}
-          <div className="song-layout__right">
-            <div className="song-layout__header">songs</div>
-
-            {/* Upload zone (custom tab only) */}
-            {tab === 'custom' && (
-              <div
-                className={`song-upload song-upload--compact ${isDragging ? 'song-upload--dragging' : ''}`}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
-                <div className="song-upload__text">
-                  Drop files or{' '}
-                  <button
-                    type="button"
-                    className="song-upload__browse"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    browse
-                  </button>
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="audio/*"
-                  multiple
-                  className="song-upload__hidden-input"
-                  onChange={handleFileInput}
-                />
-              </div>
-            )}
-
-            <div className="song-list">
-              {displayList.length === 0 && tab === 'custom' && (
-                <div className="song-list__empty">
-                  No uploaded songs yet — drop an audio file above!
-                </div>
-              )}
-              {displayList.map((song) => {
-                const isSelected = selectedSong?.id === song.id;
-                return (
-                  <div key={song.id} className="song-list__entry">
-                    <button
-                      className={`song-list__item ${isSelected ? 'selected' : ''}`}
-                      onClick={() => setSelectedSong(song)}
-                      style={{ backgroundColor: '#ffffff' }}
-                    >
-                      <div className="song-list__info">
-                        <div className="song-list__name">{song.name}</div>
-                        {bestRecords[song.id] && (
-                          <div className="song-list__best">
-                            Best: {bestRecords[song.id].bestScore.toLocaleString()} • {bestRecords[song.id].bestAccuracy.toFixed(2)}%
-                          </div>
-                        )}
-                        {song.type === 'custom' && (
-                          <div className="song-list__meta">{formatFileSize(song.size)}</div>
-                        )}
-                      </div>
-                      {song.type === 'custom' && (
-                        <button
-                          className="song-list__delete"
-                          title="Remove song"
-                          onClick={(e) => handleDelete(e, song.id)}
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      <p className="mt-4 rounded-md border border-game-border bg-game-panel px-3 py-2 text-sm text-game-muted" aria-live="polite">
+        {uiMessage}
+      </p>
     </div>
   );
 });
