@@ -126,7 +126,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
     if (!files.length) return;
 
     const mapped: SongEntry[] = files.map((f) => ({
-      id: `personal-${Date.now()}-${f.name}`,
+      id: `personal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${f.name}`,
       name: fileNameToTitle(f.name),
       source: 'personal' as const,
       file: f,
@@ -135,23 +135,33 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
     setPersonalSongs((prev) => [...mapped, ...prev]);
     setActiveTab('personal');
     setSelectedSongId(mapped[0].id);
+    setSelectedDifficulty(null); // Reset difficulty when uploading new songs
     event.currentTarget.value = '';
   }, []);
 
   const handleStartGame = useCallback(async () => {
     if (!selectedSong || !selectedDifficulty) return;
 
+    // Handle personal songs with File objects
     if (selectedSong.file) {
       onStartGame(selectedSong.file, selectedDifficulty, selectedSong.id, selectedSong.name);
       return;
     }
 
+    // Handle built-in songs with paths
     if (selectedSong.path) {
-      const response = await fetch(selectedSong.path);
-      if (!response.ok) return;
-      const blob = await response.blob();
-      const file = new File([blob], selectedSong.path.split('/').pop() ?? 'song.mp3', { type: blob.type || 'audio/mpeg' });
-      onStartGame(file, selectedDifficulty, selectedSong.id, selectedSong.name);
+      try {
+        const response = await fetch(selectedSong.path);
+        if (!response.ok) {
+          console.error('Failed to load song:', selectedSong.name);
+          return;
+        }
+        const blob = await response.blob();
+        const file = new File([blob], selectedSong.path.split('/').pop() ?? 'song.mp3', { type: blob.type || 'audio/mpeg' });
+        onStartGame(file, selectedDifficulty, selectedSong.id, selectedSong.name);
+      } catch (error) {
+        console.error('Error loading song:', error);
+      }
     }
   }, [onStartGame, selectedDifficulty, selectedSong]);
 
@@ -260,7 +270,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
 
         {/* ── RIGHT: Difficulty + Start (only show when song selected) ── */}
         {selectedSongId && (
-          <aside className="w-52 shrink-0">
+          <aside className="w-52 shrink-0" style={{ zIndex: 1 }}>
             <h2 className="mb-5 text-lg font-semibold text-white">Difficulty</h2>
 
             <div className="flex flex-col gap-3">
@@ -290,8 +300,9 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
               type="button"
               disabled={!canStart || isLoading}
               onClick={handleStartGame}
-              className="mt-8 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-8 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Start game with selected song and difficulty"
+              style={{ pointerEvents: (!canStart || isLoading) ? 'none' : 'auto' }}
             >
               {isLoading ? 'Analyzing…' : 'Start Game'}
             </button>
