@@ -225,9 +225,10 @@ interface SongSelectProps {
   onStartGame: (file: File, difficulty: Difficulty, songId: string, songName: string) => void;
   isLoading: boolean;
   bestRecords: Record<string, { bestScore: number; bestAccuracy: number }>;
+  bestRecordsByDifficulty: Record<string, Partial<Record<Difficulty, { bestScore: number; bestAccuracy: number }>>>;
 }
 
-export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords }) => {
+export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestRecords, bestRecordsByDifficulty }) => {
   const [selectedSong, setSelectedSong] = useState<SongEntry | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [isFetching, setIsFetching] = useState(false);
@@ -667,7 +668,11 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
 
               {isSelected && (
                 <div className="song-list__selected-actions">
-                  <DifficultySelect selected={difficulty} onSelect={setDifficulty} />
+                  <DifficultySelect
+                    selected={difficulty}
+                    onSelect={setDifficulty}
+                    bestByDifficulty={bestRecordsByDifficulty[song.id]}
+                  />
 
                   <button
                     className="btn btn-success"

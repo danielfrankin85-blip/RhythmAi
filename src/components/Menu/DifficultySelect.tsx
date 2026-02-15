@@ -18,9 +18,10 @@ const DIFFICULTIES: DifficultyOption[] = [
 interface DifficultySelectProps {
   selected: Difficulty;
   onSelect: (difficulty: Difficulty) => void;
+  bestByDifficulty?: Partial<Record<Difficulty, { bestScore: number; bestAccuracy: number }>>;
 }
 
-export const DifficultySelect = memo<DifficultySelectProps>(({ selected, onSelect }) => {
+export const DifficultySelect = memo<DifficultySelectProps>(({ selected, onSelect, bestByDifficulty }) => {
   return (
     <div className="difficulty-selector">
       <label className="difficulty-selector__label">Select Difficulty</label>
@@ -36,6 +37,11 @@ export const DifficultySelect = memo<DifficultySelectProps>(({ selected, onSelec
           >
             <div className="difficulty-option__name">{diff.name}</div>
             <div className="difficulty-option__description">{diff.description}</div>
+            {bestByDifficulty?.[diff.value] && (
+              <div className="difficulty-option__best">
+                Best: {bestByDifficulty[diff.value]!.bestScore.toLocaleString()} • {bestByDifficulty[diff.value]!.bestAccuracy.toFixed(2)}%
+              </div>
+            )}
           </button>
         ))}
       </div>

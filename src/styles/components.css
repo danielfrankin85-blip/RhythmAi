@@ -749,12 +749,13 @@
 
 .difficulty-selector__options {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-sm);
 }
 
 .difficulty-option {
-  padding: var(--space-md) var(--space-sm);
+  min-height: 120px;
+  padding: var(--space-lg) var(--space-md);
   background: var(--color-bg-tertiary);
   border: var(--border-width-thick) solid var(--color-border);
   border-radius: var(--radius-md);
@@ -810,6 +811,13 @@
 .difficulty-option__description {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
+}
+
+.difficulty-option__best {
+  margin-top: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-info);
+  font-weight: var(--font-weight-medium);
 }
 
 /* ─── Game Container ──────────────────────────────────────────────────────── */

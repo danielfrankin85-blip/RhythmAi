@@ -597,9 +597,9 @@ export class GameEngine extends EventEmitter<GameEventMap> {
     // a stall occurred. Give notes extra grace.
     const timeJump = songTime - prevSongTime;
     const isJank = timeJump > this.fixedDeltaTime * 3;
-    // During jank, extend miss threshold by the jank duration (capped at 500ms)
+    // During jank, extend miss threshold by the jank duration (capped at 1500ms)
     const effectiveMissThreshold = isJank
-      ? missThreshold + Math.min(timeJump, 0.5)
+      ? missThreshold + Math.min(timeJump, 1.5)
       : missThreshold;
 
     const toRemove: number[] = [];
@@ -653,6 +653,18 @@ export class GameEngine extends EventEmitter<GameEventMap> {
 
       // Miss detection – note has passed the hit zone beyond the window
       if (note.state === NoteState.ACTIVE && songTime - note.time > effectiveMissThreshold) {
+        // If a large frame jump skipped over the entire hit window in one tick,
+        // do not immediately convert to miss on this frame.
+        // This prevents "invisible" phantom misses when the browser stalls.
+        const crossedHitWindowDuringJump =
+          isJank &&
+          prevSongTime < note.time + this.config.hitWindow.good &&
+          songTime > note.time + effectiveMissThreshold;
+
+        if (crossedHitWindowDuringJump) {
+          continue;
+        }
+
         note.state = NoteState.MISSED;
         note.judgedAt = songTime;
 

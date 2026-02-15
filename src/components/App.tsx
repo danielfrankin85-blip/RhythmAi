@@ -26,6 +26,11 @@ interface SongBestRecord {
   bestAccuracy: number;
 }
 
+interface DifficultyBestRecord {
+  bestScore: number;
+  bestAccuracy: number;
+}
+
 interface SongRunRecord {
   score: number;
   accuracy: number;
@@ -93,6 +98,16 @@ export function App() {
       return {};
     }
   });
+  const [songBestRecordsByDifficulty, setSongBestRecordsByDifficulty] = useState<
+    Record<string, Partial<Record<Difficulty, DifficultyBestRecord>>>
+  >(() => {
+    try {
+      const raw = localStorage.getItem('songBestRecordsByDifficulty');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
   const [songRunHistory, setSongRunHistory] = useState<Record<string, SongRunRecord[]>>(() => {
     try {
       const raw = localStorage.getItem('songRunHistory');
@@ -130,6 +145,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('songBestRecords', JSON.stringify(songBestRecords));
   }, [songBestRecords]);
+
+  useEffect(() => {
+    localStorage.setItem('songBestRecordsByDifficulty', JSON.stringify(songBestRecordsByDifficulty));
+  }, [songBestRecordsByDifficulty]);
 
   useEffect(() => {
     localStorage.setItem('songRunHistory', JSON.stringify(songRunHistory));
@@ -189,6 +208,7 @@ export function App() {
       scoreRef.current = copy;
       setScore(copy);
       const meta = currentSongMetaRef.current;
+      const currentDifficulty = currentSongRef.current?.difficulty;
       if (meta) {
         setSongRunHistory((prev) => {
           const runs = prev[meta.songId] ?? [];
@@ -233,6 +253,30 @@ export function App() {
             },
           };
         });
+
+        if (currentDifficulty) {
+          setSongBestRecordsByDifficulty((prev) => {
+            const existingBySong = prev[meta.songId] ?? {};
+            const existing = existingBySong[currentDifficulty];
+            const isBetter =
+              !existing ||
+              copy.score > existing.bestScore ||
+              (copy.score === existing.bestScore && copy.accuracy > existing.bestAccuracy);
+
+            if (!isBetter) return prev;
+
+            return {
+              ...prev,
+              [meta.songId]: {
+                ...existingBySong,
+                [currentDifficulty]: {
+                  bestScore: copy.score,
+                  bestAccuracy: copy.accuracy,
+                },
+              },
+            };
+          });
+        }
       }
       setIsPaused(false);
       // If multiplayer, signal finish and store final score
@@ -729,7 +773,12 @@ export function App() {
             <p className="menu__subtitle">PC only for now</p>
           </div>
           <div className="menu__content">
-            <SongSelect onStartGame={handleStartGame} isLoading={isLoadingBeatmap} bestRecords={songBestRecords} />
+            <SongSelect
+              onStartGame={handleStartGame}
+              isLoading={isLoadingBeatmap}
+              bestRecords={songBestRecords}
+              bestRecordsByDifficulty={songBestRecordsByDifficulty}
+            />
           </div>
           <div className="menu__footer">
             <button className="btn mp-menu-btn" onClick={handleOpenMultiplayer}>
