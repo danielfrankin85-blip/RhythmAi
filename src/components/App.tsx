@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AudioEngine } from '../audio/AudioEngine';
 import { BeatmapGenerator, type Difficulty, type GeneratedBeatmap } from '../beatmap/BeatmapGenerator';
-import { GameEngine, GameEvent, TargetFPS, type ScoreState, HitJudgment } from '../engine/GameEngine';
+import { GameEngine, GameEvent, TargetFPS, type ScoreState, HitJudgment, type PerfectHitSound } from '../engine/GameEngine';
 import { SongSelect } from './Menu/SongSelect';
 import { Settings } from './Menu/Settings';
 import { GameUI } from './Game/GameUI';
@@ -49,6 +49,20 @@ export function App() {
     const saved = localStorage.getItem('keyBindings');
     return saved ? JSON.parse(saved) : ['d', 'f', 'j', 'k'];
   });
+  const [perfectHitSound, setPerfectHitSound] = useState<PerfectHitSound>(() => {
+    const saved = localStorage.getItem('perfectHitSound');
+    return (saved as PerfectHitSound) || 'bass';
+  });
+  const [missDipEnabled, setMissDipEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('missDipEnabled');
+    return saved ? JSON.parse(saved) : true;
+  });
+  const [leaderboardRuns] = useState<Array<{
+    score: number;
+    accuracy: number;
+    maxCombo: number;
+    playedAt: number;
+  }>>([]);
 
   const [score, setScore] = useState<ScoreState>({ ...INITIAL_SCORE });
   const [progress, setProgress] = useState(0);
@@ -381,6 +395,16 @@ export function App() {
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
+  const handlePerfectHitSoundChange = useCallback((sound: PerfectHitSound) => {
+    setPerfectHitSound(sound);
+    localStorage.setItem('perfectHitSound', sound);
+  }, []);
+
+  const handleMissDipEnabledChange = useCallback((enabled: boolean) => {
+    setMissDipEnabled(enabled);
+    localStorage.setItem('missDipEnabled', JSON.stringify(enabled));
+  }, []);
+
   // ── Render ─────────────────────────────────────────────────────────────
   const isPlaying = appState === 'playing' || appState === 'game-over';
 
@@ -401,8 +425,11 @@ export function App() {
             songName={currentSongName}
             musicVolume={musicVolume}
             sfxVolume={sfxVolume}
+            perfectHitSound={perfectHitSound}
+            leaderboardRuns={leaderboardRuns}
             onMusicVolumeChange={handleMusicVolumeChange}
             onSfxVolumeChange={handleSfxVolumeChange}
+            onPerfectHitSoundChange={handlePerfectHitSoundChange}
           />
         )}
         {appState === 'playing' && isPaused && (
@@ -452,6 +479,10 @@ export function App() {
           onMusicVolumeChange={handleMusicVolumeChange}
           sfxVolume={sfxVolume}
           onSfxVolumeChange={handleSfxVolumeChange}
+          perfectHitSound={perfectHitSound}
+          onPerfectHitSoundChange={handlePerfectHitSoundChange}
+          missDipEnabled={missDipEnabled}
+          onMissDipEnabledChange={handleMissDipEnabledChange}
           onClose={handleCloseSettings}
         />
       )}
