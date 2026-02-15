@@ -24,7 +24,6 @@ interface DifficultySelectProps {
 export const DifficultySelect = memo<DifficultySelectProps>(({ selected, onSelect, bestByDifficulty }) => {
   return (
     <div className="difficulty-selector">
-      <label className="difficulty-selector__label">Select Difficulty</label>
       <div className="difficulty-selector__options">
         {DIFFICULTIES.map((diff) => (
           <button
@@ -35,8 +34,7 @@ export const DifficultySelect = memo<DifficultySelectProps>(({ selected, onSelec
             onClick={() => onSelect(diff.value)}
             type="button"
           >
-            <div className="difficulty-option__name">{diff.name}</div>
-            <div className="difficulty-option__description">{diff.description}</div>
+            <div className="difficulty-option__name">{diff.name.toLowerCase()}</div>
             {bestByDifficulty?.[diff.value] && (
               <div className="difficulty-option__best">
                 Best: {bestByDifficulty[diff.value]!.bestScore.toLocaleString()} • {bestByDifficulty[diff.value]!.bestAccuracy.toFixed(2)}%

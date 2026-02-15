@@ -2,100 +2,6 @@ import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
 import { DifficultySelect } from './DifficultySelect';
 
-// ── YouTube helpers ──────────────────────────────────────────────────────────
-
-/** Public Piped / Invidious instances we try in order (all have CORS support) */
-// Proxied through our own /api/youtube serverless route to avoid CORS issues
-
-interface YTStreamResult {
-  title: string;
-  audioUrl: string;
-  duration: number; // seconds
-}
-
-async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
-  const fetchFromProxy = async (): Promise<YTStreamResult> => {
-    const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
-      signal: AbortSignal.timeout(30000),
-    });
-
-    const contentType = resp.headers.get('content-type') ?? '';
-    const isJson = contentType.includes('application/json');
-    const data = isJson ? await resp.json().catch(() => null) : null;
-
-    if (!resp.ok) {
-      const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
-      const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-      throw new Error(
-        body.error ||
-          'Could not extract audio from this YouTube video.\n\n' +
-            'All proxy servers are currently unavailable or the video is restricted.\n' +
-            'Try again in a moment, or paste a different link.'
-      );
-    }
-
-    if (!data || typeof data !== 'object' || !('audioUrl' in data)) {
-      throw new Error(
-        'YouTube API returned an invalid response in local dev. Restart `npm run dev` so /api proxy is applied, then try again.'
-      );
-    }
-
-    return {
-      title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
-      audioUrl: (data as { audioUrl: string }).audioUrl,
-      duration: (data as { duration?: number }).duration ?? 0,
-    };
-  };
-
-  // If user has API key, use official YouTube Data API (more reliable)
-  if (apiKey && apiKey.trim()) {
-    try {
-      const resp = await fetch('/api/youtube-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ v: videoId, apiKey }),
-        signal: AbortSignal.timeout(30000),
-      });
-
-      const contentType = resp.headers.get('content-type') ?? '';
-      const isJson = contentType.includes('application/json');
-      const data = isJson ? await resp.json().catch(() => null) : null;
-
-      if (resp.ok && data && typeof data === 'object' && 'audioUrl' in data) {
-        return {
-          title: (data as { title?: string }).title ?? `YouTube – ${videoId}`,
-          audioUrl: (data as { audioUrl: string }).audioUrl,
-          duration: (data as { duration?: number }).duration ?? 0,
-        };
-      }
-
-      const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
-      const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
-      console.warn('[YouTube] API-key extraction failed; falling back to proxy:', body.error || resp.status);
-      return await fetchFromProxy();
-    } catch (err) {
-      console.warn('[YouTube] API-key extraction network error; falling back to proxy:', (err as Error).message);
-      return await fetchFromProxy();
-    }
-  }
-
-  // Fall back to proxy servers (Piped/Invidious/cobalt)
-  return await fetchFromProxy();
-}
-
-async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
-  // Route through our own serverless proxy to avoid CORS on the audio stream
-  const resp = await fetch(`/api/youtube-download?url=${encodeURIComponent(audioUrl)}`, {
-    signal: AbortSignal.timeout(120000),
-  });
-
-  if (!resp.ok) {
-    throw new Error('Failed to download the audio stream. The video may be geo-restricted or too large.');
-  }
-
-  return await resp.blob();
-}
-
 // ── IndexedDB helpers for persisting uploaded songs ──────────────────────────
 
 const DB_NAME = 'RhythmGameSongs';
@@ -219,6 +125,30 @@ function prettySongName(filename: string): string {
     .trim();
 }
 
+// Color palette for song cards (no light blue)
+const SONG_COLORS = [
+  '#FF6B6B', // coral
+  '#FFA94D', // orange
+  '#FFD93D', // gold
+  '#69DB7C', // green
+  '#DA77F2', // violet
+  '#F783AC', // pink
+  '#38D9A9', // teal
+  '#A9E34B', // lime
+  '#FFB347', // tangerine
+  '#845EF7', // purple
+  '#FF8787', // light red
+  '#E599F7', // lavender
+  '#63E6BE', // mint
+  '#FFC078', // peach
+  '#C0EB75', // yellow-green
+  '#FF922B', // dark orange
+  '#B197FC', // soft purple
+  '#FCC419', // amber
+  '#20C997', // seafoam
+  '#FAB005', // deep gold
+];
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 interface SongSelectProps {
@@ -237,30 +167,12 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [tab, setTab] = useState<'library' | 'custom' | 'youtube' | 'ytmp3'>('library');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // YouTube search state
-  const [ytQuery, setYtQuery] = useState('');
-  const [ytResults, setYtResults] = useState<Array<{ videoId: string; title: string; thumbnail: string; uploaderName: string; duration: number }>>([]);
-  const [ytStatus, setYtStatus] = useState<'idle' | 'searching' | 'resolving' | 'downloading' | 'error'>('idle');
-  const [ytError, setYtError] = useState<string | null>(null);
-  const [ytTitle, setYtTitle] = useState<string | null>(null);
-  const [ytActiveId, setYtActiveId] = useState<string | null>(null);
-  const [ytApiKey, setYtApiKey] = useState<string>(() => localStorage.getItem('ytApiKey') ?? '');
-
   // Load persisted custom songs from IndexedDB on mount
   useEffect(() => {
     getAllStoredSongs()
       .then((songs) => setCustomSongs(songs.sort((a, b) => b.addedAt - a.addedAt)))
       .catch((err) => console.warn('Could not load stored songs:', err));
   }, []);
-
-  // Save YouTube API key to localStorage when it changes
-  useEffect(() => {
-    if (ytApiKey) {
-      localStorage.setItem('ytApiKey', ytApiKey);
-    } else {
-      localStorage.removeItem('ytApiKey');
-    }
-  }, [ytApiKey]);
 
   // ── Add files (from input or drop) ────────────────────────────────────
   const addFiles = useCallback(async (files: FileList | File[]) => {
@@ -331,70 +243,6 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
     if (selectedSong?.id === id) setSelectedSong(null);
   }, [selectedSong]);
 
-  // ── YouTube search handler ────────────────────────────────────────────
-  const handleYouTubeSearch = useCallback(async () => {
-    const q = ytQuery.trim();
-    if (!q) return;
-    try {
-      setYtStatus('searching');
-      setYtError(null);
-      setYtResults([]);
-      const resp = await fetch(`/api/youtube-search?q=${encodeURIComponent(q)}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-        throw new Error(body.error || 'Search failed');
-      }
-      const data = await resp.json();
-      setYtResults(data.results ?? []);
-      setYtStatus('idle');
-    } catch (err) {
-      setYtError((err as Error).message);
-      setYtStatus('error');
-    }
-  }, [ytQuery]);
-
-  // ── YouTube pick handler (click a search result) ──────────────────────
-  const handleYouTubePick = useCallback(async (videoId: string, title: string) => {
-    try {
-      setYtActiveId(videoId);
-      setYtStatus('resolving');
-      setYtError(null);
-      setYtTitle(title);
-
-      // Step 1: Resolve stream URL (use API key if available)
-      const result = await fetchYouTubeAudio(videoId, ytApiKey);
-      setYtTitle(result.title);
-      setYtStatus('downloading');
-
-      // Step 2: Download the audio blob
-      const blob = await downloadYouTubeBlob(result.audioUrl);
-
-      // Step 3: Persist to IndexedDB
-      const song: StoredSong = {
-        id: `yt-${videoId}-${Date.now()}`,
-        name: result.title,
-        blob,
-        addedAt: Date.now(),
-        size: blob.size,
-      };
-      await storeSong(song);
-      setCustomSongs((prev) => [song, ...prev]);
-
-      // Auto-select and jump to custom tab
-      setSelectedSong({ type: 'custom', id: song.id, name: song.name, blob: song.blob, size: song.size });
-      setTab('custom');
-      setYtStatus('idle');
-      setYtActiveId(null);
-      setYtTitle(null);
-    } catch (err) {
-      setYtError((err as Error).message);
-      setYtStatus('error');
-      setYtActiveId(null);
-    }
-  }, [ytApiKey]);
-
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
     if (!selectedSong || isFetching) return;
@@ -448,289 +296,149 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
 
   return (
     <div className="song-select">
-      <div className="song-select__header">
-        <h2 className="song-select__title">Select Your Song</h2>
-        <p className="song-select__description">
-          Pick a built-in song or upload your own — the AI analyzes any audio and generates a beatmap
-        </p>
-      </div>
-
-      {/* ── Upload zone (drag-and-drop + button) ─────────────────────────── */}
-      <div
-        className={`song-upload ${isDragging ? 'song-upload--dragging' : ''}`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <div className="song-upload__icon">📂</div>
-        <div className="song-upload__text">
-          Drag & drop audio files here, or{' '}
-          <button
-            type="button"
-            className="song-upload__browse"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            browse files
-          </button>
-        </div>
-        <div className="song-upload__hint">
-          MP3, WAV, OGG, FLAC, AAC, M4A — any audio file works
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*"
-          multiple
-          className="song-upload__hidden-input"
-          onChange={handleFileInput}
-        />
-      </div>
-
-      {/* ── Tabs ─────────────────────────────────────────────────────────── */}
+      {/* ── Tab bar ──────────────────────────────────────────────────────── */}
       <div className="song-tabs">
         <button
           className={`song-tabs__tab ${tab === 'library' ? 'song-tabs__tab--active' : ''}`}
           onClick={() => setTab('library')}
         >
-          🎵 Built-in ({builtinEntries.length})
+          Built in
         </button>
         <button
           className={`song-tabs__tab ${tab === 'custom' ? 'song-tabs__tab--active' : ''}`}
           onClick={() => setTab('custom')}
         >
-          📁 My Songs ({customEntries.length})
+          Personal
         </button>
+        <div className="song-tabs__brand">Rhythm AI</div>
         <button
           className={`song-tabs__tab ${tab === 'youtube' ? 'song-tabs__tab--active' : ''}`}
           onClick={() => setTab('youtube')}
         >
-          ▶ YouTube (Under Maintenance)
+          youtube
         </button>
         <button
           className={`song-tabs__tab ${tab === 'ytmp3' ? 'song-tabs__tab--active' : ''}`}
           onClick={() => setTab('ytmp3')}
         >
-          🎧 YT to MP3
+          youtube to mp3
         </button>
       </div>
 
-      {/* ── YouTube search ────────────────────────────────────────────── */}
+      {/* ── YouTube tab ───────────────────────────────────────────────── */}
       {tab === 'youtube' && (
-        <div className="yt-section">
-          <div className="yt-section__header">
-            <div className="yt-section__icon">▶</div>
-            <div>
-              <div className="yt-section__title">Search YouTube</div>
-              <div className="yt-section__subtitle">
-                Search for any song — click a result to download, analyze, and play
-              </div>
-            </div>
-          </div>
+        <div className="yt-panel">
+          <div className="yt-panel__header">Youtube (under construction ⚠️)</div>
+          <div className="yt-panel__body" />
+        </div>
+      )}
 
-          {/* API Key Settings */}
-          <div className="yt-section__api-key">
-            <div className="yt-section__api-key-header">
-              <span>⚙️ YouTube API Key (optional but recommended)</span>
-              <a
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="yt-section__api-key-link"
+      {/* ── YT to MP3 tab ───────────────────────────────────────────────── */}
+      {tab === 'ytmp3' && (
+        <div className="yt-panel">
+          <div className="yt-panel__header">Youtube to mp3</div>
+          <div className="yt-panel__body" />
+        </div>
+      )}
+
+      {/* ── Two-column layout for library / custom ────────────────────── */}
+      {(tab === 'library' || tab === 'custom') && (
+        <div className="song-layout">
+          {/* Left: songs */}
+          <div className="song-layout__left">
+            <div className="song-layout__header">songs</div>
+
+            {/* Upload zone (custom tab only) */}
+            {tab === 'custom' && (
+              <div
+                className={`song-upload song-upload--compact ${isDragging ? 'song-upload--dragging' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
-                Get free API key →
-              </a>
-            </div>
-            <input
-              type="password"
-              className="yt-section__api-key-input"
-              placeholder="Paste your YouTube Data API v3 key here..."
-              value={ytApiKey}
-              onChange={(e) => { setYtApiKey(e.target.value); setYtError(null); }}
-              disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
-            />
-            <div className="yt-section__api-key-info">
-              {ytApiKey ? (
-                <span style={{ color: '#4ade80' }}>✓ Using official YouTube API (more reliable)</span>
-              ) : (
-                <span style={{ color: '#fbbf24' }}>⚠ Using proxy servers (may fail for some videos)</span>
-              )}
-            </div>
-          </div>
-
-          <div className="yt-section__input-row">
-            <input
-              type="text"
-              className="yt-section__input"
-              placeholder="Search for a song..."
-              value={ytQuery}
-              onChange={(e) => { setYtQuery(e.target.value); setYtError(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && ytQuery.trim() && ytStatus !== 'searching') handleYouTubeSearch(); }}
-              disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
-            />
-            <button
-              className="yt-section__btn"
-              onClick={handleYouTubeSearch}
-              disabled={!ytQuery.trim() || ytStatus === 'searching' || ytStatus === 'resolving' || ytStatus === 'downloading'}
-            >
-              {ytStatus === 'searching' ? '🔍 Searching...' : '🔍 Search'}
-            </button>
-          </div>
-
-          {(ytStatus === 'resolving' || ytStatus === 'downloading') && ytTitle && (
-            <div className="yt-section__progress">
-              <div className="yt-section__progress-spinner" />
-              <span>{ytStatus === 'resolving' ? 'Finding audio stream…' : <>Downloading: <strong>{ytTitle}</strong></>}</span>
-            </div>
-          )}
-
-          {ytError && (
-            <div className="yt-section__error">
-              ⚠ {ytError}
-            </div>
-          )}
-
-          {/* ── Search results ────────────────────────────────────────── */}
-          {ytResults.length > 0 && (
-            <div className="yt-results">
-              {ytResults.map((r) => {
-                const mins = Math.floor(r.duration / 60);
-                const secs = r.duration % 60;
-                const isActive = ytActiveId === r.videoId;
-                return (
+                <div className="song-upload__text">
+                  Drop files or{' '}
                   <button
-                    key={r.videoId}
-                    className={`yt-results__item ${isActive ? 'yt-results__item--active' : ''}`}
-                    onClick={() => handleYouTubePick(r.videoId, r.title)}
-                    disabled={ytStatus === 'resolving' || ytStatus === 'downloading'}
+                    type="button"
+                    className="song-upload__browse"
+                    onClick={() => fileInputRef.current?.click()}
                   >
-                    <img
-                      className="yt-results__thumb"
-                      src={r.thumbnail}
-                      alt=""
-                      loading="lazy"
-                    />
-                    <div className="yt-results__info">
-                      <div className="yt-results__title">{r.title}</div>
-                      <div className="yt-results__meta">
-                        {r.uploaderName}{r.duration > 0 ? ` • ${mins}:${secs.toString().padStart(2, '0')}` : ''}
-                      </div>
-                    </div>
-                    {isActive && (
-                      <div className="yt-results__spinner" />
-                    )}
+                    browse
                   </button>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  multiple
+                  className="song-upload__hidden-input"
+                  onChange={handleFileInput}
+                />
+              </div>
+            )}
+
+            <div className="song-list">
+              {displayList.length === 0 && tab === 'custom' && (
+                <div className="song-list__empty">
+                  No uploaded songs yet — drop an audio file above!
+                </div>
+              )}
+              {displayList.map((song, index) => {
+                const isSelected = selectedSong?.id === song.id;
+                return (
+                  <div key={song.id} className="song-list__entry">
+                    <button
+                      className={`song-list__item ${isSelected ? 'selected' : ''}`}
+                      onClick={() => setSelectedSong(song)}
+                      style={{ backgroundColor: SONG_COLORS[index % SONG_COLORS.length] }}
+                    >
+                      <div className="song-list__info">
+                        <div className="song-list__name">{song.name}</div>
+                        {bestRecords[song.id] && (
+                          <div className="song-list__best">
+                            Best: {bestRecords[song.id].bestScore.toLocaleString()} • {bestRecords[song.id].bestAccuracy.toFixed(2)}%
+                          </div>
+                        )}
+                        {song.type === 'custom' && (
+                          <div className="song-list__meta">{formatFileSize(song.size)}</div>
+                        )}
+                      </div>
+                      {song.type === 'custom' && (
+                        <button
+                          className="song-list__delete"
+                          title="Remove song"
+                          onClick={(e) => handleDelete(e, song.id)}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </button>
+                  </div>
                 );
               })}
             </div>
-          )}
-
-          {ytResults.length === 0 && ytStatus === 'idle' && ytQuery.trim() && (
-            <div className="yt-section__tips">
-              No results yet — hit Search or press Enter
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── YT to MP3 convert ───────────────────────────────────────────── */}
-      {tab === 'ytmp3' && (
-        <div className="yt-section">
-          <div className="yt-section__header">
-            <div className="yt-section__icon">🎧</div>
-            <div>
-              <div className="yt-section__title">YT to MP3</div>
-              <div className="yt-section__subtitle">
-                Use this site to convert your YouTube video to MP3 320kbps, then upload it here.
-              </div>
-            </div>
           </div>
 
-          <div className="yt-section__tips">
-            <a
-              href="https://cnvmp3.com/v51"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="yt-section__api-key-link"
+          {/* Right: difficulty */}
+          <div className="song-layout__right">
+            <div className="song-layout__header">difficulty</div>
+
+            <DifficultySelect
+              selected={difficulty}
+              onSelect={setDifficulty}
+              bestByDifficulty={selectedSong ? bestRecordsByDifficulty[selectedSong.id] : undefined}
+            />
+
+            <button
+              className="btn btn-success"
+              onClick={handleStart}
+              disabled={!selectedSong || isLoading || isFetching}
+              style={{ width: '100%', marginTop: '0.5rem' }}
             >
-              Open cnvmp3.com/v51 →
-            </a>
-          </div>
-
-          <div className="yt-section__tips">
-            <strong>How to use:</strong>
-            <ol style={{ marginTop: '0.5rem', paddingLeft: '1.25rem' }}>
-              <li>Copy your YouTube video link.</li>
-              <li>Open <strong>https://cnvmp3.com/v51</strong> and paste the link.</li>
-              <li>Select <strong>MP3</strong> and choose <strong>320kbps</strong>.</li>
-              <li>Download the MP3 file.</li>
-              <li>Come back here and drag/drop that MP3 into the upload box.</li>
-            </ol>
+              {isFetching ? 'Loading Song...' : isLoading ? 'Analyzing…' : '▶ Start Game'}
+            </button>
           </div>
         </div>
-      )}
-
-      {/* ── Song list ────────────────────────────────────────────────────── */}
-      {(tab === 'library' || tab === 'custom') && (
-      <div className="song-list">
-        {displayList.length === 0 && tab === 'custom' && (
-          <div className="song-list__empty">
-            No uploaded songs yet — drop an audio file above to get started!
-          </div>
-        )}
-        {displayList.map((song) => {
-          const isSelected = selectedSong?.id === song.id;
-
-          return (
-            <div key={song.id} className="song-list__entry">
-              <button
-                className={`song-list__item ${isSelected ? 'selected' : ''}`}
-                onClick={() => setSelectedSong(song)}
-              >
-                <div className="song-list__icon">{song.type === 'builtin' ? '🎵' : '📁'}</div>
-                <div className="song-list__info">
-                  <div className="song-list__name">{song.name}</div>
-                  {bestRecords[song.id] && (
-                    <div className="song-list__best">
-                      Best: {bestRecords[song.id].bestScore.toLocaleString()} • {bestRecords[song.id].bestAccuracy.toFixed(2)}%
-                    </div>
-                  )}
-                  {song.type === 'custom' && (
-                    <div className="song-list__meta">{formatFileSize(song.size)}</div>
-                  )}
-                </div>
-                {song.type === 'custom' && (
-                  <button
-                    className="song-list__delete"
-                    title="Remove song"
-                    onClick={(e) => handleDelete(e, song.id)}
-                  >
-                    ✕
-                  </button>
-                )}
-              </button>
-
-              {isSelected && (
-                <div className="song-list__selected-actions">
-                  <DifficultySelect
-                    selected={difficulty}
-                    onSelect={setDifficulty}
-                    bestByDifficulty={bestRecordsByDifficulty[song.id]}
-                  />
-
-                  <button
-                    className="btn btn-success"
-                    onClick={handleStart}
-                    disabled={isLoading || isFetching}
-                    style={{ width: '100%', marginTop: '1rem' }}
-                  >
-                    {isFetching ? 'Loading Song...' : isLoading ? 'Analyzing Audio & Generating Beatmap...' : '▶ Start Game'}
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
       )}
     </div>
   );
