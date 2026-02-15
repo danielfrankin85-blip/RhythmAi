@@ -13,6 +13,12 @@ interface YTStreamResult {
   duration: number; // seconds
 }
 
+interface LinkToMp3Result {
+  title: string;
+  audioUrl: string;
+  note?: string;
+}
+
 async function fetchYouTubeAudio(videoId: string, apiKey?: string): Promise<YTStreamResult> {
   const fetchFromProxy = async (): Promise<YTStreamResult> => {
     const resp = await fetch(`/api/youtube?v=${encodeURIComponent(videoId)}`, {
@@ -94,6 +100,31 @@ async function downloadYouTubeBlob(audioUrl: string): Promise<Blob> {
   }
 
   return await resp.blob();
+}
+
+async function convertLinkToMp3(url: string): Promise<LinkToMp3Result> {
+  const resp = await fetch('/api/yt-to-mp3', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+    signal: AbortSignal.timeout(45000),
+  });
+
+  const contentType = resp.headers.get('content-type') ?? '';
+  const isJson = contentType.includes('application/json');
+  const data = isJson ? await resp.json().catch(() => null) : null;
+
+  if (!resp.ok || !data || typeof data !== 'object' || !('audioUrl' in data)) {
+    const fallbackText = !isJson ? await resp.text().catch(() => '') : '';
+    const body = data ?? { error: fallbackText || `HTTP ${resp.status}` };
+    throw new Error(body.error || 'Could not convert this link right now.');
+  }
+
+  return {
+    title: (data as { title?: string }).title ?? 'Converted Track',
+    audioUrl: (data as { audioUrl: string }).audioUrl,
+    note: (data as { note?: string }).note,
+  };
 }
 
 // ── IndexedDB helpers for persisting uploaded songs ──────────────────────────
@@ -234,7 +265,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [isFetching, setIsFetching] = useState(false);
   const [customSongs, setCustomSongs] = useState<StoredSong[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [tab, setTab] = useState<'library' | 'custom' | 'youtube'>('library');
+  const [tab, setTab] = useState<'library' | 'custom' | 'youtube' | 'ytmp3'>('library');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // YouTube search state
@@ -245,6 +276,13 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [ytTitle, setYtTitle] = useState<string | null>(null);
   const [ytActiveId, setYtActiveId] = useState<string | null>(null);
   const [ytApiKey, setYtApiKey] = useState<string>(() => localStorage.getItem('ytApiKey') ?? '');
+
+  // YT to MP3 state
+  const [linkInput, setLinkInput] = useState('');
+  const [linkStatus, setLinkStatus] = useState<'idle' | 'resolving' | 'downloading' | 'error'>('idle');
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkTitle, setLinkTitle] = useState<string | null>(null);
+  const [linkNote, setLinkNote] = useState<string | null>(null);
 
   // Load persisted custom songs from IndexedDB on mount
   useEffect(() => {
@@ -395,6 +433,45 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
     }
   }, [ytApiKey]);
 
+  // ── YT to MP3 convert handler ────────────────────────────────────────
+  const handleConvertLink = useCallback(async () => {
+    const raw = linkInput.trim();
+    if (!raw) return;
+
+    try {
+      setLinkStatus('resolving');
+      setLinkError(null);
+      setLinkTitle(null);
+      setLinkNote(null);
+
+      const result = await convertLinkToMp3(raw);
+      setLinkTitle(result.title);
+      setLinkNote(result.note ?? null);
+      setLinkStatus('downloading');
+
+      const blob = await downloadYouTubeBlob(result.audioUrl);
+      const song: StoredSong = {
+        id: `link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: result.title,
+        blob,
+        addedAt: Date.now(),
+        size: blob.size,
+      };
+
+      await storeSong(song);
+      setCustomSongs((prev) => [song, ...prev]);
+      setSelectedSong({ type: 'custom', id: song.id, name: song.name, blob: song.blob, size: song.size });
+      setTab('custom');
+      setLinkStatus('idle');
+      setLinkTitle(null);
+      setLinkNote(null);
+      setLinkInput('');
+    } catch (err) {
+      setLinkError((err as Error).message);
+      setLinkStatus('error');
+    }
+  }, [linkInput]);
+
   // ── Play selected song ────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
     if (!selectedSong || isFetching) return;
@@ -505,6 +582,12 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
           onClick={() => setTab('youtube')}
         >
           ▶ YouTube (Under Maintenance)
+        </button>
+        <button
+          className={`song-tabs__tab ${tab === 'ytmp3' ? 'song-tabs__tab--active' : ''}`}
+          onClick={() => setTab('ytmp3')}
+        >
+          🎧 YT to MP3
         </button>
       </div>
 
@@ -626,8 +709,65 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
         </div>
       )}
 
+      {/* ── YT to MP3 convert ───────────────────────────────────────────── */}
+      {tab === 'ytmp3' && (
+        <div className="yt-section">
+          <div className="yt-section__header">
+            <div className="yt-section__icon">🎧</div>
+            <div>
+              <div className="yt-section__title">YT to MP3</div>
+              <div className="yt-section__subtitle">
+                Paste a YouTube, YouTube Music, or Spotify link and auto-convert it to an MP3 download for the game.
+              </div>
+            </div>
+          </div>
+
+          <div className="yt-section__input-row">
+            <input
+              type="text"
+              className="yt-section__input"
+              placeholder="Paste YouTube / YouTube Music / Spotify link..."
+              value={linkInput}
+              onChange={(e) => { setLinkInput(e.target.value); setLinkError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && linkInput.trim() && linkStatus !== 'resolving' && linkStatus !== 'downloading') {
+                  handleConvertLink();
+                }
+              }}
+              disabled={linkStatus === 'resolving' || linkStatus === 'downloading'}
+            />
+            <button
+              className="yt-section__btn"
+              onClick={handleConvertLink}
+              disabled={!linkInput.trim() || linkStatus === 'resolving' || linkStatus === 'downloading'}
+            >
+              {linkStatus === 'resolving'
+                ? 'Converting...'
+                : linkStatus === 'downloading'
+                  ? 'Downloading...'
+                  : 'Convert & Download'}
+            </button>
+          </div>
+
+          {(linkStatus === 'resolving' || linkStatus === 'downloading') && linkTitle && (
+            <div className="yt-section__progress">
+              <div className="yt-section__progress-spinner" />
+              <span>{linkStatus === 'resolving' ? 'Resolving link…' : <>Downloading: <strong>{linkTitle}</strong></>}</span>
+            </div>
+          )}
+
+          {linkNote && (
+            <div className="yt-section__tips">{linkNote}</div>
+          )}
+
+          {linkError && (
+            <div className="yt-section__error">⚠ {linkError}</div>
+          )}
+        </div>
+      )}
+
       {/* ── Song list ────────────────────────────────────────────────────── */}
-      {tab !== 'youtube' && (
+      {(tab === 'library' || tab === 'custom') && (
       <div className="song-list">
         {displayList.length === 0 && tab === 'custom' && (
           <div className="song-list__empty">
