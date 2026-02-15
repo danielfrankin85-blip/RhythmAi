@@ -633,51 +633,56 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
             No uploaded songs yet — drop an audio file above to get started!
           </div>
         )}
-        {displayList.map((song) => (
-          <button
-            key={song.id}
-            className={`song-list__item ${selectedSong?.id === song.id ? 'selected' : ''}`}
-            onClick={() => setSelectedSong(song)}
-          >
-            <div className="song-list__icon">{song.type === 'builtin' ? '🎵' : '📁'}</div>
-            <div className="song-list__info">
-              <div className="song-list__name">{song.name}</div>
-              {bestRecords[song.id] && (
-                <div className="song-list__best">
-                  Best: {bestRecords[song.id].bestScore.toLocaleString()} • {bestRecords[song.id].bestAccuracy.toFixed(2)}%
+        {displayList.map((song) => {
+          const isSelected = selectedSong?.id === song.id;
+
+          return (
+            <div key={song.id} className="song-list__entry">
+              <button
+                className={`song-list__item ${isSelected ? 'selected' : ''}`}
+                onClick={() => setSelectedSong(song)}
+              >
+                <div className="song-list__icon">{song.type === 'builtin' ? '🎵' : '📁'}</div>
+                <div className="song-list__info">
+                  <div className="song-list__name">{song.name}</div>
+                  {bestRecords[song.id] && (
+                    <div className="song-list__best">
+                      Best: {bestRecords[song.id].bestScore.toLocaleString()} • {bestRecords[song.id].bestAccuracy.toFixed(2)}%
+                    </div>
+                  )}
+                  {song.type === 'custom' && (
+                    <div className="song-list__meta">{formatFileSize(song.size)}</div>
+                  )}
+                </div>
+                {song.type === 'custom' && (
+                  <button
+                    className="song-list__delete"
+                    title="Remove song"
+                    onClick={(e) => handleDelete(e, song.id)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </button>
+
+              {isSelected && (
+                <div className="song-list__selected-actions">
+                  <DifficultySelect selected={difficulty} onSelect={setDifficulty} />
+
+                  <button
+                    className="btn btn-success"
+                    onClick={handleStart}
+                    disabled={isLoading || isFetching}
+                    style={{ width: '100%', marginTop: '1rem' }}
+                  >
+                    {isFetching ? 'Loading Song...' : isLoading ? 'Analyzing Audio & Generating Beatmap...' : '▶ Start Game'}
+                  </button>
                 </div>
               )}
-              {song.type === 'custom' && (
-                <div className="song-list__meta">{formatFileSize(song.size)}</div>
-              )}
             </div>
-            {song.type === 'custom' && (
-              <button
-                className="song-list__delete"
-                title="Remove song"
-                onClick={(e) => handleDelete(e, song.id)}
-              >
-                ✕
-              </button>
-            )}
-          </button>
-        ))}
+          );
+        })}
       </div>
-      )}
-
-      {selectedSong && (
-        <>
-          <DifficultySelect selected={difficulty} onSelect={setDifficulty} />
-
-          <button
-            className="btn btn-success"
-            onClick={handleStart}
-            disabled={isLoading || isFetching}
-            style={{ width: '100%', marginTop: '1rem' }}
-          >
-            {isFetching ? 'Loading Song...' : isLoading ? 'Analyzing Audio & Generating Beatmap...' : '▶ Start Game'}
-          </button>
-        </>
       )}
     </div>
   );

@@ -263,6 +263,17 @@
   box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
 }
 
+.song-list__entry {
+  display: flex;
+  flex-direction: column;
+}
+
+.song-list__selected-actions {
+  margin: var(--space-sm) 0 var(--space-sm) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-left: var(--border-width) solid var(--color-border);
+}
+
 .song-list__icon {
   font-size: var(--font-size-xl);
   flex-shrink: 0;
