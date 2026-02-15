@@ -213,10 +213,10 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
       <div className="flex flex-1 gap-10 lg:gap-20">
 
         {/* ── LEFT: Song list ── */}
-        <section className="flex-1">
+        <section className="flex-1" style={{ overflow: 'visible' }}>
           <h2 className="mb-5 text-lg font-semibold text-white">Songs</h2>
 
-          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: '70vh' }}>
+          <div className="flex flex-col gap-4 overflow-y-auto overflow-x-visible pr-8" style={{ maxHeight: '70vh' }}>
             {songs.length === 0 && (
               <p className="text-sm text-gray-500">No songs in this tab yet.</p>
             )}
@@ -231,11 +231,11 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
                   onClick={() => setSelectedSongId(song.id)}
                   className={`
                     song-card
-                    group relative rounded-xl border-2 bg-white px-4 py-5
+                    group relative rounded-xl border-2 bg-white px-5 py-5
                     text-left text-black shadow-sm
-                    max-w-[200px]
-                    transition-all duration-200 ease-out
-                    hover:-translate-y-2 hover:scale-105 hover:shadow-lg hover:z-10
+                    max-w-[320px] w-full
+                    transition-all duration-300 ease-out
+                    hover:translate-x-3 hover:scale-105 hover:shadow-lg hover:z-10
                     focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-game-bg
                     ${isSelected
                       ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.35)]'
@@ -246,9 +246,9 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
                   }}
                   aria-pressed={isSelected}
                 >
-                  <span className="block text-sm font-semibold leading-tight">{song.name}</span>
+                  <span className="block text-base font-black leading-tight" style={{ fontFamily: 'Comic Sans MS, Chalkboard SE, Comic Neue, cursive' }}>{song.name}</span>
                   {record && (
-                    <span className="mt-2 block text-xs text-gray-500">
+                    <span className="mt-2 block text-xs text-gray-500 font-medium">
                       Best: {record.bestScore.toLocaleString()} · {record.bestAccuracy.toFixed(2)}%
                     </span>
                   )}

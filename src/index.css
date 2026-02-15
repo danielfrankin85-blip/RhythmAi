@@ -20,13 +20,13 @@
 }
 
 @layer components {
-  /* Song card hover effects - push adjacent cards */
+  /* Song card hover effects - push adjacent cards horizontally */
   .song-card:hover ~ .song-card {
-    transform: translateY(4px);
+    transform: translateX(8px);
   }
   
-  /* Previous sibling effect (requires reverse order or JS, fallback to subtle shift) */
+  /* Previous sibling effect - push up slightly */
   .song-card:has(+ .song-card:hover) {
-    transform: translateY(-4px);
+    transform: translateX(8px);
   }
 }
