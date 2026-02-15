@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useState, type ChangeEvent } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
 
 /* ── Song source tab type ─────────────────────────────────────────────── */
-type SongTab = 'builtin' | 'personal' | 'rhythm-ai' | 'youtube' | 'yt-mp3';
+type SongTab = 'builtin' | 'personal' | 'youtube' | 'yt-mp3';
 
 interface SongEntry {
   id: string;
@@ -14,18 +14,25 @@ interface SongEntry {
 
 /* ── Song data ────────────────────────────────────────────────────────── */
 const BUILT_IN_SONGS: SongEntry[] = [
-  { id: 'b1', name: 'Central Cee - Booga', source: 'builtin', path: '/music/Central_Cee_-_Booga_(Lyrics)_320k.mp3' },
-  { id: 'b2', name: 'Don Toliver - FWU', source: 'builtin', path: '/music/Don_Toliver_-_FWU_(AUDIO)_320k.mp3' },
-  { id: 'b3', name: 'Lil Uzi Vert - What You Saying', source: 'builtin', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
-  { id: 'b4', name: 'Playboi Carti - Kelly K', source: 'builtin', path: '/music/Playboi_Carti_-_Kelly_K_(Audio)_320k.mp3' },
-  { id: 'b5', name: 'PUT IT ONG', source: 'builtin', path: '/music/PUT_IT_ONG_320k.mp3' },
-  { id: 'b6', name: 'The Weeknd, Playboi Carti - Timeless', source: 'builtin', path: '/music/The_Weeknd%2C_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
-];
-
-const RHYTHM_AI_SONGS: SongEntry[] = [
-  { id: 'ai-1', name: 'Rhythm AI Suggestion: Neon Pulse', source: 'rhythm-ai' },
-  { id: 'ai-2', name: 'Rhythm AI Suggestion: Skyline Drive', source: 'rhythm-ai' },
-  { id: 'ai-3', name: 'Rhythm AI Suggestion: Night Circuit', source: 'rhythm-ai' },
+  { id: 'b1', name: 'Airplane Mode', source: 'builtin', path: '/music/Airplane_Mode_320k.mp3' },
+  { id: 'b2', name: 'ANRI - I Can\'t Stop The Loneliness', source: 'builtin', path: '/music/ANRI_-_I_Can\'t_Stop_The_Loneliness_320k.mp3' },
+  { id: 'b3', name: 'Central Cee - Booga', source: 'builtin', path: '/music/Central_Cee_-_Booga_(Lyrics)_320k.mp3' },
+  { id: 'b4', name: 'Don Toliver - FWU', source: 'builtin', path: '/music/Don_Toliver_-_FWU_(AUDIO)_320k.mp3' },
+  { id: 'b5', name: 'HAIL THE OMEGA TREE', source: 'builtin', path: '/music/HAIL_THE_OMEGA_TREE_320k.mp3' },
+  { id: 'b6', name: 'Hi Fi Set - Sky Restaurant', source: 'builtin', path: '/music/Hi_Fi_Set_-_Sky_Restaurant_320k.mp3' },
+  { id: 'b7', name: 'Imogen Heap - Headlock', source: 'builtin', path: '/music/Imogen_Heap_-_Headlock_(Lyrics)_320k.mp3' },
+  { id: 'b8', name: 'Like Him', source: 'builtin', path: '/music/Like_Him_320k.mp3' },
+  { id: 'b9', name: 'Lil Tecca - Dark Thoughts', source: 'builtin', path: '/music/Lil_Tecca_-_Dark_Thoughts_(Official_Video)_320k.mp3' },
+  { id: 'b10', name: 'Lil Uzi Vert - What You Saying', source: 'builtin', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
+  { id: 'b11', name: 'NIWA FULL SHOWCASE - Teno and More', source: 'builtin', path: '/music/NIWA_FULL_SHOWCASE_-_Teno_and_More_320k.mp3' },
+  { id: 'b12', name: 'Playboi Carti - Kelly K', source: 'builtin', path: '/music/Playboi_Carti_-_Kelly_K_(Audio)_320k.mp3' },
+  { id: 'b13', name: 'PUT IT ONG', source: 'builtin', path: '/music/PUT_IT_ONG_320k.mp3' },
+  { id: 'b14', name: 'RAYE - Where Is My Husband', source: 'builtin', path: '/music/RAYE_-_Where_Is_My_Husband_320k.mp3' },
+  { id: 'b15', name: 'Spectrum [スペクトラム] - F-L-Y', source: 'builtin', path: '/music/Spectrum_[スペクトラム]_-_F-L-Y_(1980)_320k.mp3' },
+  { id: 'b16', name: 'The Weeknd, Playboi Carti - Timeless', source: 'builtin', path: '/music/The_Weeknd,_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
+  { id: 'b17', name: 'Yasuha - Flyday Chinatown', source: 'builtin', path: '/music/Yasuha_-_Flyday_Chinatown_320k.mp3' },
+  { id: 'b18', name: 'ミカヅキBIGWAVE - Emotional Prism', source: 'builtin', path: '/music/ミカヅキBIGWAVE_-_Emotional_Prism_感情的なプリズム_320k.mp3' },
+  { id: 'b19', name: '稲葉曇『ロストアンブレラ』', source: 'builtin', path: '/music/稲葉曇『ロストアンブレラ』Vo._歌愛ユキ_320k.mp3' },
 ];
 
 const YOUTUBE_SONGS: SongEntry[] = [
@@ -41,17 +48,16 @@ const YT_MP3_SONGS: SongEntry[] = [
 const TAB_OPTIONS: { id: SongTab; label: string }[] = [
   { id: 'builtin', label: 'Built In' },
   { id: 'personal', label: 'Personal' },
-  { id: 'rhythm-ai', label: 'Rhythm AI' },
   { id: 'youtube', label: 'YouTube' },
   { id: 'yt-mp3', label: 'YouTube to MP3' },
 ];
 
-const DIFFICULTIES: { value: Difficulty; label: string }[] = [
-  { value: 'easy', label: 'Easy' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'hard', label: 'Hard' },
-  { value: 'extreme', label: 'Extreme' },
-  { value: 'deadly', label: 'Deadly' },
+const DIFFICULTIES: { value: Difficulty; label: string; color: string }[] = [
+  { value: 'easy', label: 'Easy', color: 'bg-green-500 hover:bg-green-400' },
+  { value: 'medium', label: 'Medium', color: 'bg-orange-500 hover:bg-orange-400' },
+  { value: 'hard', label: 'Hard', color: 'bg-red-500 hover:bg-red-400' },
+  { value: 'extreme', label: 'Extreme', color: 'bg-purple-500 hover:bg-purple-400' },
+  { value: 'deadly', label: 'Deadly', color: 'bg-red-900 hover:bg-red-800' },
 ];
 
 /* ── Props ────────────────────────────────────────────────────────────── */
@@ -77,7 +83,6 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const songs = useMemo(() => {
     if (activeTab === 'builtin') return BUILT_IN_SONGS;
     if (activeTab === 'personal') return personalSongs;
-    if (activeTab === 'rhythm-ai') return RHYTHM_AI_SONGS;
     if (activeTab === 'youtube') return YOUTUBE_SONGS;
     return YT_MP3_SONGS;
   }, [activeTab, personalSongs]);
@@ -186,7 +191,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
         <section className="flex-1">
           <h2 className="mb-5 text-lg font-semibold text-white">Songs</h2>
 
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: '70vh' }}>
             {songs.length === 0 && (
               <p className="text-sm text-gray-500">No songs in this tab yet.</p>
             )}
@@ -224,43 +229,45 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
           </div>
         </section>
 
-        {/* ── RIGHT: Difficulty + Start ── */}
-        <aside className="w-52 shrink-0">
-          <h2 className="mb-5 text-lg font-semibold text-white">Difficulty</h2>
+        {/* ── RIGHT: Difficulty + Start (only show when song selected) ── */}
+        {selectedSongId && (
+          <aside className="w-52 shrink-0">
+            <h2 className="mb-5 text-lg font-semibold text-white">Difficulty</h2>
 
-          <div className="flex flex-col gap-3">
-            {DIFFICULTIES.map((d) => {
-              const isActive = d.value === selectedDifficulty;
-              return (
-                <button
-                  key={d.value}
-                  onClick={() => setSelectedDifficulty(d.value)}
-                  className={`
-                    rounded-xl border-2 px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider
-                    transition-all duration-200 ease-out
-                    hover:-translate-y-0.5 hover:shadow-md
-                    ${isActive
-                      ? 'border-sky-400 bg-white text-black shadow-[0_0_12px_rgba(56,189,248,0.35)]'
-                      : 'border-gray-600 bg-game-panel text-gray-300 hover:border-white hover:text-white'}
-                  `}
-                  aria-pressed={isActive}
-                >
-                  {d.label}
-                </button>
-              );
-            })}
-          </div>
+            <div className="flex flex-col gap-3">
+              {DIFFICULTIES.map((d) => {
+                const isActive = d.value === selectedDifficulty;
+                return (
+                  <button
+                    key={d.value}
+                    onClick={() => setSelectedDifficulty(d.value)}
+                    className={`
+                      rounded-xl border-2 px-4 py-3 text-left text-sm font-bold uppercase tracking-wider text-white
+                      transition-all duration-200 ease-out
+                      hover:-translate-y-0.5 hover:shadow-md
+                      ${isActive
+                        ? `${d.color} border-white shadow-[0_0_12px_rgba(255,255,255,0.4)]`
+                        : 'border-gray-600 bg-game-panel hover:border-white'}
+                    `}
+                    aria-pressed={isActive}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
 
-          <button
-            type="button"
-            disabled={!canStart || isLoading}
-            onClick={handleStartGame}
-            className="mt-8 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Start game with selected song and difficulty"
-          >
-            {isLoading ? 'Analyzing…' : 'Start Game'}
-          </button>
-        </aside>
+            <button
+              type="button"
+              disabled={!canStart || isLoading}
+              onClick={handleStartGame}
+              className="mt-8 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold uppercase tracking-wide text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Start game with selected song and difficulty"
+            >
+              {isLoading ? 'Analyzing…' : 'Start Game'}
+            </button>
+          </aside>
+        )}
       </div>
     </div>
   );
