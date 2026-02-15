@@ -13,7 +13,7 @@ import { MultiplayerResults } from './Game/MultiplayerResults';
 import { MultiplayerManager, type SongInfo, type PlayerScore, type LobbyState } from '../multiplayer/MultiplayerManager';
 import '../styles/global.css';
 import '../styles/components.css';
-import MusicPlayer from '../audio/MusicPlayer';
+// MusicPlayer removed — menu melody disabled
 
 type AppState = 'menu' | 'loading' | 'playing' | 'game-over' | 'mp-lobby' | 'mp-waiting';
 
@@ -124,7 +124,7 @@ export function App() {
   const mpSongFileRef = useRef<File | null>(null);
   const mpDifficultyRef = useRef<Difficulty>('medium');
   const appStateRef = useRef<AppState>(appState);
-  const musicRef = useRef<MusicPlayer | null>(null);
+  // musicRef removed
   const handleStartGameRef = useRef<((file: File, difficulty: Difficulty, songId: string, songName: string) => void) | null>(null);
 
   useEffect(() => {
@@ -135,19 +135,7 @@ export function App() {
     localStorage.setItem('songRunHistory', JSON.stringify(songRunHistory));
   }, [songRunHistory]);
 
-  // Start menu music when in menu, stop when playing
-  useEffect(() => {
-    if (!musicRef.current) musicRef.current = new MusicPlayer();
-    const music = musicRef.current;
-    music.setVolume(musicVolume);
-    if (appState === 'menu') {
-      // Resume audio context on user gesture if suspended
-      try { music.start(); } catch (e) { /* ignore */ }
-    } else {
-      music.stop();
-    }
-    return () => { /* don't auto-stop here */ };
-  }, [appState, musicVolume]);
+  // Menu music disabled — no procedural melody
 
   // ── Helper: attach event listeners to a game engine ────────────────────
   const attachListeners = useCallback((engine: GameEngine) => {
@@ -737,7 +725,7 @@ export function App() {
         <div className="menu">
           <div className="menu__header">
             <h1 className="menu__title">Rhythm Ai</h1>
-            <p className="menu__subtitle">A fast-paced rhythm game where you hit notes in time with your music.</p>
+            <p className="menu__subtitle">any mp3 music file to a game</p>
             <p className="menu__subtitle">PC only for now</p>
           </div>
           <div className="menu__content">
