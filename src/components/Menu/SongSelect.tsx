@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, type ChangeEvent } from 'react';
+import { memo, useCallback, useMemo, useState, useEffect, type ChangeEvent } from 'react';
 import type { Difficulty } from '../../beatmap/BeatmapGenerator';
 
 /* ── Song source tab type ─────────────────────────────────────────────── */
@@ -18,21 +18,20 @@ const BUILT_IN_SONGS: SongEntry[] = [
   { id: 'b2', name: 'ANRI - I Can\'t Stop The Loneliness', source: 'builtin', path: '/music/ANRI_-_I_Can\'t_Stop_The_Loneliness_320k.mp3' },
   { id: 'b3', name: 'Central Cee - Booga', source: 'builtin', path: '/music/Central_Cee_-_Booga_(Lyrics)_320k.mp3' },
   { id: 'b4', name: 'Don Toliver - FWU', source: 'builtin', path: '/music/Don_Toliver_-_FWU_(AUDIO)_320k.mp3' },
-  { id: 'b5', name: 'HAIL THE OMEGA TREE', source: 'builtin', path: '/music/HAIL_THE_OMEGA_TREE_320k.mp3' },
-  { id: 'b6', name: 'Hi Fi Set - Sky Restaurant', source: 'builtin', path: '/music/Hi_Fi_Set_-_Sky_Restaurant_320k.mp3' },
-  { id: 'b7', name: 'Imogen Heap - Headlock', source: 'builtin', path: '/music/Imogen_Heap_-_Headlock_(Lyrics)_320k.mp3' },
-  { id: 'b8', name: 'Like Him', source: 'builtin', path: '/music/Like_Him_320k.mp3' },
-  { id: 'b9', name: 'Lil Tecca - Dark Thoughts', source: 'builtin', path: '/music/Lil_Tecca_-_Dark_Thoughts_(Official_Video)_320k.mp3' },
-  { id: 'b10', name: 'Lil Uzi Vert - What You Saying', source: 'builtin', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
-  { id: 'b11', name: 'NIWA FULL SHOWCASE - Teno and More', source: 'builtin', path: '/music/NIWA_FULL_SHOWCASE_-_Teno_and_More_320k.mp3' },
-  { id: 'b12', name: 'Playboi Carti - Kelly K', source: 'builtin', path: '/music/Playboi_Carti_-_Kelly_K_(Audio)_320k.mp3' },
-  { id: 'b13', name: 'PUT IT ONG', source: 'builtin', path: '/music/PUT_IT_ONG_320k.mp3' },
-  { id: 'b14', name: 'RAYE - Where Is My Husband', source: 'builtin', path: '/music/RAYE_-_Where_Is_My_Husband_320k.mp3' },
-  { id: 'b15', name: 'Spectrum [スペクトラム] - F-L-Y', source: 'builtin', path: '/music/Spectrum_[スペクトラム]_-_F-L-Y_(1980)_320k.mp3' },
-  { id: 'b16', name: 'The Weeknd, Playboi Carti - Timeless', source: 'builtin', path: '/music/The_Weeknd,_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
-  { id: 'b17', name: 'Yasuha - Flyday Chinatown', source: 'builtin', path: '/music/Yasuha_-_Flyday_Chinatown_320k.mp3' },
-  { id: 'b18', name: 'ミカヅキBIGWAVE - Emotional Prism', source: 'builtin', path: '/music/ミカヅキBIGWAVE_-_Emotional_Prism_感情的なプリズム_320k.mp3' },
-  { id: 'b19', name: '稲葉曇『ロストアンブレラ』', source: 'builtin', path: '/music/稲葉曇『ロストアンブレラ』Vo._歌愛ユキ_320k.mp3' },
+  { id: 'b5', name: 'Hi Fi Set - Sky Restaurant', source: 'builtin', path: '/music/Hi_Fi_Set_-_Sky_Restaurant_320k.mp3' },
+  { id: 'b6', name: 'Imogen Heap - Headlock', source: 'builtin', path: '/music/Imogen_Heap_-_Headlock_(Lyrics)_320k.mp3' },
+  { id: 'b7', name: 'Like Him', source: 'builtin', path: '/music/Like_Him_320k.mp3' },
+  { id: 'b8', name: 'Lil Tecca - Dark Thoughts', source: 'builtin', path: '/music/Lil_Tecca_-_Dark_Thoughts_(Official_Video)_320k.mp3' },
+  { id: 'b9', name: 'Lil Uzi Vert - What You Saying', source: 'builtin', path: '/music/Lil_Uzi_Vert_-_What_You_Saying_(Lyrics)_320k.mp3' },
+  { id: 'b10', name: 'NIWA FULL SHOWCASE - Teno and More', source: 'builtin', path: '/music/NIWA_FULL_SHOWCASE_-_Teno_and_More_320k.mp3' },
+  { id: 'b11', name: 'Playboi Carti - Kelly K', source: 'builtin', path: '/music/Playboi_Carti_-_Kelly_K_(Audio)_320k.mp3' },
+  { id: 'b12', name: 'PUT IT ONG', source: 'builtin', path: '/music/PUT_IT_ONG_320k.mp3' },
+  { id: 'b13', name: 'RAYE - Where Is My Husband', source: 'builtin', path: '/music/RAYE_-_Where_Is_My_Husband_320k.mp3' },
+  { id: 'b14', name: 'Spectrum [スペクトラム] - F-L-Y', source: 'builtin', path: '/music/Spectrum_[スペクトラム]_-_F-L-Y_(1980)_320k.mp3' },
+  { id: 'b15', name: 'The Weeknd, Playboi Carti - Timeless', source: 'builtin', path: '/music/The_Weeknd,_Playboi_Carti_-_Timeless_(Audio)_320k.mp3' },
+  { id: 'b16', name: 'Yasuha - Flyday Chinatown', source: 'builtin', path: '/music/Yasuha_-_Flyday_Chinatown_320k.mp3' },
+  { id: 'b17', name: 'ミカヅキBIGWAVE - Emotional Prism', source: 'builtin', path: '/music/ミカヅキBIGWAVE_-_Emotional_Prism_感情的なプリズム_320k.mp3' },
+  { id: 'b18', name: '稲葉曇『ロストアンブレラ』', source: 'builtin', path: '/music/稲葉曇『ロストアンブレラ』Vo._歌愛ユキ_320k.mp3' },
 ];
 
 const YOUTUBE_SONGS: SongEntry[] = [
@@ -78,6 +77,32 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty | null>(null);
   const [personalSongs, setPersonalSongs] = useState<SongEntry[]>([]);
+
+  // Load personal songs from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('rhythmgame-personal-songs');
+      if (saved) {
+        const parsed = JSON.parse(saved) as Array<Omit<SongEntry, 'file'>>;
+        // Note: File objects can't be stored in localStorage, so personal songs
+        // won't have actual File references after refresh. User must re-upload.
+        setPersonalSongs(parsed.map(s => ({ ...s, source: 'personal' as const })));
+      }
+    } catch (error) {
+      console.error('Failed to load personal songs from localStorage', error);
+    }
+  }, []);
+
+  // Save personal songs to localStorage whenever they change
+  useEffect(() => {
+    try {
+      // Serialize without File objects (can't be stored)
+      const serializable = personalSongs.map(({ id, name, source, path }) => ({ id, name, source, path }));
+      localStorage.setItem('rhythmgame-personal-songs', JSON.stringify(serializable));
+    } catch (error) {
+      console.error('Failed to save personal songs to localStorage', error);
+    }
+  }, [personalSongs]);
 
   /* Derived */
   const songs = useMemo(() => {
@@ -191,7 +216,7 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
         <section className="flex-1">
           <h2 className="mb-5 text-lg font-semibold text-white">Songs</h2>
 
-          <div className="flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: '70vh' }}>
+          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: '70vh' }}>
             {songs.length === 0 && (
               <p className="text-sm text-gray-500">No songs in this tab yet.</p>
             )}
@@ -206,20 +231,24 @@ export const SongSelect = memo<SongSelectProps>(({ onStartGame, isLoading, bestR
                   onClick={() => setSelectedSongId(song.id)}
                   className={`
                     song-card
-                    group relative rounded-xl border-2 bg-white px-5 py-4
+                    group relative rounded-xl border-2 bg-white px-4 py-5
                     text-left text-black shadow-sm
+                    max-w-[200px]
                     transition-all duration-200 ease-out
-                    hover:-translate-y-1 hover:shadow-md
+                    hover:-translate-y-2 hover:scale-105 hover:shadow-lg hover:z-10
                     focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-game-bg
                     ${isSelected
                       ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.35)]'
                       : 'border-black/80 hover:border-black'}
                   `}
+                  style={{
+                    minHeight: '80px'
+                  }}
                   aria-pressed={isSelected}
                 >
-                  <span className="block text-sm font-semibold leading-snug">{song.name}</span>
+                  <span className="block text-sm font-semibold leading-tight">{song.name}</span>
                   {record && (
-                    <span className="mt-1 block text-xs text-gray-500">
+                    <span className="mt-2 block text-xs text-gray-500">
                       Best: {record.bestScore.toLocaleString()} · {record.bestAccuracy.toFixed(2)}%
                     </span>
                   )}
